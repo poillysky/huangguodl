@@ -56,6 +56,8 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          # NAS 常见 amd64 / arm64，避免拉错架构导致 ffmpeg 段错误
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

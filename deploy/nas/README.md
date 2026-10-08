@@ -51,3 +51,17 @@ sh update.sh
 ```
 
 镜像：https://hub.docker.com/r/poillysky/huangguodl
+
+## 常见问题
+
+**下载报 `ffmpeg 失败 code=-11`**  
+旧镜像里 imageio 自带 ffmpeg 在部分 NAS CPU 上会段错误。拉含系统 ffmpeg 的新镜像：
+
+```bash
+cd /vol1/1000/Docker/huangguodl
+docker compose pull && docker compose up -d
+docker exec huangguodl ffmpeg -version
+```
+
+**上游超时**  
+改 compose 里 `HTTP_PROXY`（容器可达地址，勿用 `127.0.0.1`）。

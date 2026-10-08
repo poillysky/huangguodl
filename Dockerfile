@@ -1,4 +1,4 @@
-# 单一镜像：前端静态资源 + FastAPI（同进程、同端口）
+# 单一镜像：前端静态资源 + FastAPI + 系统 ffmpeg（NAS 比 imageio 自带二进制稳）
 FROM node:20-alpine AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* ./
@@ -9,9 +9,13 @@ RUN npm run build
 FROM python:3.12-slim
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && ffmpeg -version | head -n 1
+
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt \
-    && python -c "import imageio_ffmpeg; p=imageio_ffmpeg.get_ffmpeg_exe(); print('ffmpeg', p)"
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY packages/core /app/packages/core
 COPY backend/app /app/backend/app
@@ -21,6 +25,7 @@ ENV PYTHONPATH=/app/packages/core:/app/backend
 ENV OUT_DIR=/data/downloads
 ENV DATA_DIR=/data/config
 ENV STATIC_DIR=/app/static
+ENV HG_FFMPEG=/usr/bin/ffmpeg
 ENV HOST=0.0.0.0
 ENV PORT=8080
 

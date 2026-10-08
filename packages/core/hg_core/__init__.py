@@ -905,14 +905,20 @@ def is_plausible_media(path: str) -> bool:
 
 
 def resolve_ffmpeg() -> str:
-    """优先用 pip 依赖 imageio-ffmpeg（随容器/虚拟环境走，适合 NAS）。
+    """解析 ffmpeg 可执行文件。
 
-    可选覆盖：环境变量 HG_FFMPEG / FFMPEG（调试用，部署勿依赖本机安装）。
+    顺序：HG_FFMPEG/FFMPEG → 系统 PATH（Docker/NAS 用 apt 版更稳）
+    → imageio-ffmpeg 自带二进制（本机 pip 场景兜底）。
     """
     for env_key in ("HG_FFMPEG", "FFMPEG"):
         v = (os.environ.get(env_key) or "").strip()
-        if v and os.path.isfile(v):
+        if v and os.path.isfile(v) and os.access(v, os.X_OK):
             return v
+
+    which = shutil.which("ffmpeg")
+    if which and os.path.isfile(which):
+        return which
+
     try:
         import imageio_ffmpeg  # type: ignore
 
@@ -921,11 +927,11 @@ def resolve_ffmpeg() -> str:
             return exe
     except Exception as exc:  # noqa: BLE001
         raise FileNotFoundError(
-            "未找到 ffmpeg。请安装依赖：pip install imageio-ffmpeg "
-            f"（已写入 backend/requirements.txt）详情: {exc}"
+            "未找到 ffmpeg。Docker 请 apt 安装 ffmpeg；本机可 "
+            f"pip install imageio-ffmpeg。详情: {exc}"
         ) from exc
     raise FileNotFoundError(
-        "imageio-ffmpeg 已安装但未提供可执行文件。请重装：pip install -U imageio-ffmpeg"
+        "未找到可用的 ffmpeg（系统 PATH 与 imageio-ffmpeg 均不可用）"
     )
 
 
@@ -1040,7 +1046,12 @@ def download_hls_ffmpeg(
             os.remove(tmp)
         except OSError:
             pass
-        raise RuntimeError(err or f"ffmpeg 失败 code={proc.returncode}")
+        rc = proc.returncode
+        # 负返回码 = 被信号杀：-11 SIGSEGV（二进制/架构不兼容常见）
+        if isinstance(rc, int) and rc < 0:
+            hint = f"ffmpeg 被信号杀 sig={-rc}（若为 11 多为二进制与 CPU 架构不匹配，请用系统 ffmpeg）"
+            raise RuntimeError(f"{err}\n{hint}".strip() if err else hint)
+        raise RuntimeError(err or f"ffmpeg 失败 code={rc}")
 
     if not is_plausible_media(tmp):
         try:
