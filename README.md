@@ -202,9 +202,13 @@ cd frontend && npm install && npm run dev -- --host 0.0.0.0
 - **PWA**：生产构建后注册 `sw.js`；开发模式会卸载旧 SW，避免主屏幕白屏。只缓存壳（`/`、manifest、图标），不缓存 `/api` 与哈希资源
 
 ```bash
-# Docker（复制 .env.example → .env 后）
+# Docker 本地构建
 docker compose up -d --build
 # http://localhost:8080
+
+# NAS：见 deploy/nas/（拉 Hub 镜像 + 绑定宿主机目录）
+# cp deploy/nas/.env.example deploy/nas/.env && 改路径后
+# cd deploy/nas && docker compose pull && docker compose up -d
 ```
 
 并发相关环境变量（见 `.env.example`）：`WORKERS`（单任务线程池）、`MAX_PARALLEL_TASKS`（同时进行的剧）、`MAX_GLOBAL_WORKERS`（跨任务分集下载总闸）。

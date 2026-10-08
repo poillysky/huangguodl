@@ -1,19 +1,25 @@
-# 从 Docker Hub 拉单一镜像部署
+# 简易 Hub 部署（命名卷）。NAS 请用 deploy/nas/
 # docker compose -f docker-compose.hub.yml --env-file .env up -d
 
 services:
-  app:
+  huangguodl:
     image: ${DOCKERHUB_USER:-poillysky}/huangguodl:${IMAGE_TAG:-latest}
+    container_name: huangguodl
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       HG_API: ${HG_API:-https://huangguoai.com}
       OUT_DIR: /data/downloads
       DATA_DIR: /data/config
       COVER_PROXY: ${COVER_PROXY:-https://ai.wulii.de5.net}
       COVER_TOKEN: ${COVER_TOKEN:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
       API_TOKEN: ${API_TOKEN:-}
       STATIC_DIR: /app/static
       HOST: 0.0.0.0
       PORT: 8080
+      WORKERS: ${WORKERS:-3}
+      MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS:-2}
+      MAX_GLOBAL_WORKERS: ${MAX_GLOBAL_WORKERS:-4}
     volumes:
       - downloads:/data/downloads
       - appconfig:/data/config
