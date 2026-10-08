@@ -1,11 +1,11 @@
 # 黄果 hg-dl — NAS 部署（单一镜像）
-# 用法见同目录 README.md
+# 目录建议：/vol1/1000/Docker/huangguodl
 
 services:
   huangguodl:
     image: ${DOCKERHUB_USER:-poillysky}/huangguodl:${IMAGE_TAG:-latest}
     container_name: huangguodl
-    restart: unless-stopped
+    restart: always
     ports:
       - "${WEB_PORT:-8080}:8080"
     environment:
@@ -25,10 +25,10 @@ services:
       MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS:-2}
       MAX_GLOBAL_WORKERS: ${MAX_GLOBAL_WORKERS:-4}
     volumes:
-      # 下载目录 → 映射到 NAS 媒体库（改 .env 里的 HOST_DOWNLOADS）
-      - ${HOST_DOWNLOADS:-./data/downloads}:/data/downloads
-      # 配置 / 任务状态 / 收藏
-      - ${HOST_CONFIG:-./data/config}:/data/config
+      # 下载 → 115 同步目录「黄果」
+      - ${HOST_DOWNLOADS:-/vol1/1000/Sync/115上传/黄果}:/data/downloads
+      # 配置 / 任务 / 收藏
+      - ${HOST_CONFIG:-/vol1/1000/Docker/huangguodl/config}:/data/config
     healthcheck:
       test:
         [

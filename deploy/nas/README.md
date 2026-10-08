@@ -4,53 +4,55 @@
 
 ## 需要的文件
 
-把本目录拷到 NAS，例如：
+推荐目录（已按本机 NAS 写好默认值）：
 
 ```
-/volume1/docker/huangguodl/
+/vol1/1000/Docker/huangguodl/
   docker-compose.yml
   .env                 ← 由 .env.example 复制改名
-  data/
-    downloads/         ← 或映射到媒体库路径
-    config/
+  config/              ← 任务 / 收藏 / 设置
+  update.sh
+
+下载目录（115 同步）：
+/vol1/1000/Sync/115上传/黄果
 ```
+
+`restart: always`（开机与崩溃都会拉起）。
 
 ## 快速开始
 
 ```bash
-cd /volume1/docker/huangguodl   # 按你的实际路径
+cd /vol1/1000/Docker/huangguodl
 
 cp .env.example .env
-# 编辑 .env：HOST_DOWNLOADS / HOST_CONFIG / API_TOKEN / WEB_PORT
+# 需要鉴权时再改 API_TOKEN；路径默认已可用
 
-mkdir -p data/downloads data/config
+mkdir -p /vol1/1000/Docker/huangguodl/config
+mkdir -p "/vol1/1000/Sync/115上传/黄果"
 
 docker compose pull
 docker compose up -d
 
-# 看日志
 docker compose logs -f
 ```
 
 浏览器打开：`http://NAS的IP:8080`
 
-## 路径怎么填
+## 路径
 
-| 变量 | 作用 | 示例 |
+| 变量 | 作用 | 默认 |
 |------|------|------|
-| `HOST_DOWNLOADS` | 剧集下载目录 | `/volume1/media/huangguo` |
-| `HOST_CONFIG` | 任务/收藏/设置 JSON | `/volume1/docker/huangguodl/config` |
+| `HOST_DOWNLOADS` | 剧集下载 | `/vol1/1000/Sync/115上传/黄果` |
+| `HOST_CONFIG` | 任务/收藏/设置 | `/vol1/1000/Docker/huangguodl/config` |
 | `WEB_PORT` | 宿主机端口 | `8080` |
-| `API_TOKEN` | 访问口令（可选） | 随机字符串 |
-
-群晖 File Station / Container Manager 里路径一般以 `/volume1/...` 开头。
+| `API_TOKEN` | 访问口令（可选） | 空 |
 
 ## 更新镜像
 
 ```bash
-cd /volume1/docker/huangguodl
-docker compose pull
-docker compose up -d
+cd /vol1/1000/Docker/huangguodl
+sh update.sh
+# 或：docker compose pull && docker compose up -d
 ```
 
 镜像由 GitHub Actions 推到 Docker Hub：  
