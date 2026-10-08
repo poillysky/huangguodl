@@ -12,9 +12,9 @@ jobs:
     permissions:
       contents: read
     env:
-      # 与其它仓库命名对齐；|| 会对「未配置/空」回退
-      DH_USER: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME || secrets.DOCKER_USER || github.repository_owner }}
-      DH_PASS: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD || secrets.DOCKERHUB_PASSWORD || secrets.DOCKER_TOKEN }}
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner }}
+      # 本仓库 Secret 名为 DOCKERHUB
+      DH_PASS: ${{ secrets.DOCKERHUB || secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,18 +22,11 @@ jobs:
       - name: Verify Docker Hub secrets
         run: |
           if [ -z "$DH_PASS" ]; then
-            echo "::error::本仓库 Actions 读到的 Docker Hub 密码为空（Password required 的根因）。"
-            echo "::error::打开: https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "::error::确认有以下任一 Repository secret（名字必须完全一致）："
-            echo "::error::  DOCKERHUB_TOKEN 或 DOCKER_PASSWORD 或 DOCKERHUB_PASSWORD 或 DOCKER_TOKEN"
-            echo "::error::常见踩坑："
-            echo "::error::  1) Secret 建在 Organization，但 Repository access 没勾选 huangguodl"
-            echo "::error::  2) Secret 建在 Environment，而本 workflow 没用 environment:"
-            echo "::error::  3) 配到了别的仓库，不是 poillysky/huangguodl"
+            echo "::error::Docker Hub 密码 Secret 为空。本仓库应配置名为 DOCKERHUB 的 Repository secret。"
             exit 1
           fi
           echo "Docker Hub user=$DH_USER"
-          echo "Password secret: present (${#DH_PASS} chars)"
+          echo "Password secret: present"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
