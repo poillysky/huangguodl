@@ -567,7 +567,9 @@ export default function ArtHlsPlayer({
         poster: poster || "",
         theme: "#f5f1ea",
         lang: "zh-cn",
+        // 异步取流后手势窗口已过：须静音才能自动开播，出画后再试开声
         autoplay: true,
+        muted: true,
         volume: 0.85,
         autoSize: false,
         autoMini: false,
@@ -585,6 +587,7 @@ export default function ArtHlsPlayer({
         autoOrientation: true,
         moreVideoAttr: {
           playsInline: true,
+          muted: true,
         },
         layers: [
           {
@@ -649,16 +652,46 @@ export default function ArtHlsPlayer({
         }
       });
 
+      const kickPlay = () => {
+        if (!art) return;
+        try {
+          void art.play();
+        } catch {
+          /* ignore */
+        }
+        const v = art.video as HTMLVideoElement | undefined;
+        if (v) void v.play().catch(() => {});
+      };
+
+      const tryUnmute = () => {
+        if (!art) return;
+        try {
+          art.muted = false;
+          if (typeof art.volume === "number" && art.volume <= 0) {
+            art.volume = 0.85;
+          }
+        } catch {
+          /* iOS 可能拒绝，保持静音播即可 */
+        }
+      };
+
       art.on("ready", () => {
         if (art) {
           art.layers.show = art.controls.show;
           // 异步创建完成后，用最新 biz 刷一次顶栏/选集（防连播竞态）
           syncBizChrome(art, bizRef.current);
+          kickPlay();
         }
       });
 
-      art.on("video:canplay", emitVideoReady);
-      art.on("video:playing", emitVideoReady);
+      art.on("video:canplay", () => {
+        emitVideoReady();
+        kickPlay();
+      });
+      art.on("video:playing", () => {
+        emitVideoReady();
+        tryUnmute();
+      });
 
       art.on("video:ended", () => {
         onEndedRef.current?.();

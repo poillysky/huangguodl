@@ -1186,6 +1186,26 @@ def purge_bad_media(*paths: str) -> None:
             pass
 
 
+def remove_episode_media(show: Show, ep: int, out_dir: str, ext: str = ".mp4") -> None:
+    """强制重下：删除目标/旧路径媒体、.part、同名 nfo。"""
+    use = _normalize_ext(ext)
+    paths = (
+        target_path(show, ep, use, out_dir),
+        legacy_target_path(show, ep, use, out_dir),
+        flat_legacy_path(show, ep, use, out_dir),
+    )
+    for path in paths:
+        if not path:
+            continue
+        for p in (path, path + ".part", episode_nfo_path(path)):
+            if not p or not os.path.isfile(p):
+                continue
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def _normalize_ext(ext: str) -> str:
     if ext and len(ext) <= 5 and re.fullmatch(r"\.[A-Za-z0-9]{2,4}", ext):
         return ext.lower()
@@ -1351,23 +1371,26 @@ def target_path(show: Show, ep: int, ext: str, out_dir: str) -> str:
 # 6. 下载
 # --------------------------------------------------------------------------
 def download(job: Job, api: HGApi, out_dir: str, *, timeout: int = 60,
-             retries: int = 3) -> Job:
+             retries: int = 3, force: bool = False) -> Job:
     final = job.path or target_path(job.show, job.ep, "", out_dir)
     part = final + ".part"
     ext = os.path.splitext(final)[1] or ".mp4"
-    # 误存的 m3u8/假视频（含旧扁平路径）清掉重下
-    purge_bad_media(
-        final,
-        legacy_target_path(job.show, job.ep, ext, out_dir),
-        flat_legacy_path(job.show, job.ep, ext, out_dir),
-    )
-    if already_done(final) and not os.path.exists(part):
-        job.status, job.note = "exist", "已存在"
-        try:
-            write_episode_nfo(job.show, job.ep, job.ep_title, final)
-        except OSError:
-            pass
-        return job
+    if force:
+        remove_episode_media(job.show, job.ep, out_dir, ext)
+    else:
+        # 误存的 m3u8/假视频（含旧扁平路径）清掉重下
+        purge_bad_media(
+            final,
+            legacy_target_path(job.show, job.ep, ext, out_dir),
+            flat_legacy_path(job.show, job.ep, ext, out_dir),
+        )
+        if already_done(final) and not os.path.exists(part):
+            job.status, job.note = "exist", "已存在"
+            try:
+                write_episode_nfo(job.show, job.ep, job.ep_title, final)
+            except OSError:
+                pass
+            return job
 
     try:
         os.makedirs(os.path.dirname(final) or out_dir, exist_ok=True)

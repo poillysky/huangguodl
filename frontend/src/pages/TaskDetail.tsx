@@ -32,6 +32,7 @@ export default function TaskDetailPage() {
   const nav = useNavigate();
   const [task, setTask] = useState<Task | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -119,13 +120,15 @@ export default function TaskDetailPage() {
         id: task.vid || undefined,
         cover: true,
         start: true,
+        force: true,
+        follow: Boolean(task.follow),
       });
       if (!res.ok) {
         setError(res.error || "重新下载失败");
         return;
       }
       if (res.skipped) {
-        setError(res.message || "本地已全部完整，无需重下");
+        setError(res.message || "没有可重下的集");
         return;
       }
       if (res.taskId && res.taskId !== task.id) {
@@ -134,6 +137,53 @@ export default function TaskDetailPage() {
       }
       if (res.task) setTask(res.task);
       else await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function onToggleFollow() {
+    if (!task || starting) return;
+    setStarting(true);
+    setError("");
+    try {
+      const res = await api.setTaskFollow(task.id, !task.follow);
+      if (!res.ok) {
+        setError(res.error || "追更设置失败");
+        return;
+      }
+      if (res.task) setTask(res.task);
+      else await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function onCheckFollow() {
+    if (starting) return;
+    setStarting(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await api.checkFollow();
+      await refresh();
+      if (res.errors?.length) {
+        setError(res.errors.join("；"));
+        return;
+      }
+      setNotice(
+        [
+          `检查 ${res.checked} 部`,
+          res.enqueued ? `新增 ${res.enqueued} 集` : "无新增",
+          res.started ? `已开始 ${res.started}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -164,6 +214,7 @@ export default function TaskDetailPage() {
       }
     >
       {error ? <p className="err banner">{error}</p> : null}
+      {notice && !error ? <p className="muted banner">{notice}</p> : null}
 
       {task ? (
         <div className="task-detail">
@@ -219,30 +270,63 @@ export default function TaskDetailPage() {
             ) : null}
           </dl>
 
-          {canStart ? (
-            <button
-              type="button"
-              className="btn task-detail-start"
-              disabled={starting}
-              onClick={() => void onStart()}
-            >
-              {starting
-                ? "启动中…"
-                : task.status === "error"
-                  ? "重试下载"
-                  : "开始下载"}
-            </button>
-          ) : null}
+          <div className="task-detail-actions">
+            {canStart ? (
+              <button
+                type="button"
+                className="btn task-detail-start"
+                disabled={starting}
+                onClick={() => void onStart()}
+              >
+                {starting
+                  ? "启动中…"
+                  : task.status === "error"
+                    ? "重试下载"
+                    : "开始下载"}
+              </button>
+            ) : null}
 
-          {task.status === "done" ? (
-            <button
-              type="button"
-              className="btn task-detail-start"
-              disabled={starting}
-              onClick={() => void onRedownload()}
-            >
-              {starting ? "检查中…" : "重新下载"}
-            </button>
+            {task.status !== "running" ? (
+              <button
+                type="button"
+                className={`btn ghost task-detail-start${task.follow ? " on" : ""}`}
+                disabled={starting}
+                onClick={() => void onToggleFollow()}
+              >
+                {task.follow ? "追更中 · 点按关闭" : "开启追更"}
+              </button>
+            ) : null}
+
+            {task.follow && task.status !== "running" ? (
+              <button
+                type="button"
+                className="btn ghost task-detail-start"
+                disabled={starting}
+                onClick={() => void onCheckFollow()}
+              >
+                {starting ? "检查中…" : "立刻检查新集"}
+              </button>
+            ) : null}
+
+            {task.status === "done" ? (
+              <button
+                type="button"
+                className="btn task-detail-start"
+                disabled={starting}
+                onClick={() => void onRedownload()}
+              >
+                {starting ? "准备中…" : "重新下载（覆盖）"}
+              </button>
+            ) : null}
+          </div>
+
+          {task.follow ? (
+            <p className="muted task-follow-hint">
+              追更已开：约每天自动检查，只下完成记录里没有的新集
+              {task.followCheckedAt
+                ? ` · 上次 ${formatTime(task.followCheckedAt)}`
+                : ""}
+            </p>
           ) : null}
 
           {task.status === "running" ? (

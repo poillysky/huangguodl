@@ -25,14 +25,21 @@ from hg_core import (
 
 from ..auth import require_token
 from ..config import Settings, get_settings
+from ..services.cover_cache import CoverDisk
 from ..services.downloads import (
     _public_task,
+    check_follow_tasks,
     find_show,
     run_download,
+    set_task_follow,
     show_json,
     start_download,
 )
 from ..services.state import S
+
+_COVER_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400",
+}
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
@@ -48,6 +55,14 @@ class DownloadBody(BaseModel):
     threshold: float = 0.62
     # True = create and start immediately; default only enqueue
     start: bool = False
+    # True = 清完成记录并覆盖本地重下
+    force: bool = False
+    # True = 任务开启追更（每日只下新增集）
+    follow: bool = False
+
+
+class FollowBody(BaseModel):
+    follow: bool = True
 
 
 class SettingsBody(BaseModel):
@@ -190,44 +205,56 @@ def favorite_remove(vid: str) -> dict[str, Any]:
 
 
 def _related_shows(show_id: str, detail: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
-    """猜你喜欢：优先同题材标签，否则热门里排除自己。"""
+    """猜你喜欢：热门/最新拉一批（常已缓存），按与本剧标签重合度排序。
+
+    不串行打多个上游标签页，避免慢；相关度靠本地标签匹配。
+    """
     assert S.api is not None
-    out: list = []
+    want = {
+        str(t).strip().lower()
+        for t in (detail.get("tags") or [])
+        if str(t).strip()
+    }
+    pool: list = []
     seen = {str(show_id)}
-    slugs: list[str] = []
-    for link in detail.get("tag_links") or []:
-        if not isinstance(link, dict):
-            continue
-        url = str(link.get("url") or "")
-        if url.startswith("/tag/") and url.endswith("/"):
-            slug = url[len("/tag/") : -1].strip("/")
-            if slug:
-                slugs.append(slug)
-    for slug in slugs[:2]:
+    for cat in ("hot", "new"):
         try:
-            for s in S.api.catalog(f"tag:{slug}", 1, 12):
+            for s in S.api.catalog(cat, 1, 36):
                 if s.id in seen:
                     continue
                 seen.add(s.id)
                 S.show_index[s.id] = s
-                out.append(s)
-                if len(out) >= limit:
-                    return [show_json(x) for x in out]
+                pool.append(s)
         except Exception:  # noqa: BLE001
             continue
-    if len(out) < limit:
+
+    # 有标签时再补一次搜索（只 1 次），提高同题材比例
+    tag = next(iter(want), "")
+    if tag:
         try:
-            for s in S.api.catalog("hot", 1, 20):
+            for s in S.api.search(tag, 1)[:20]:
                 if s.id in seen:
                     continue
                 seen.add(s.id)
                 S.show_index[s.id] = s
-                out.append(s)
-                if len(out) >= limit:
-                    break
+                pool.append(s)
         except Exception:  # noqa: BLE001
             pass
-    return [show_json(x) for x in out]
+
+    def _score(s: Any) -> tuple[int, int]:
+        stags = {str(t).strip().lower() for t in (s.tags or []) if str(t).strip()}
+        overlap = len(want & stags) if want else 0
+        return (overlap, int(s.hot or 0))
+
+    pool.sort(key=_score, reverse=True)
+    # 有标签时尽量先出有重合的；不够再用热门补齐
+    if want:
+        matched = [s for s in pool if _score(s)[0] > 0]
+        rest = [s for s in pool if _score(s)[0] == 0]
+        chosen = (matched + rest)[:limit]
+    else:
+        chosen = pool[:limit]
+    return [show_json(x) for x in chosen]
 
 
 @router.get("/show")
@@ -290,7 +317,7 @@ def show_detail(id: str = Query(..., min_length=1)) -> dict[str, Any]:
         channel = ""
         detail = {}
 
-    related = _related_shows(show.id, detail if isinstance(detail, dict) else {})
+    # 猜你喜欢走独立接口，避免拖慢详情首屏
     return {
         "id": show.id,
         "title": title,
@@ -304,9 +331,32 @@ def show_detail(id: str = Query(..., min_length=1)) -> dict[str, Any]:
         "author": author,
         "channel": channel,
         "episodes": eps,
-        "related": related,
+        "related": [],
         "label": show.label,
     }
+
+
+@router.get("/related")
+@router.get("/show/related")
+def show_related(
+    id: str = Query(..., min_length=1),
+    limit: int = Query(8, ge=1, le=24),
+    tags: str = Query(""),
+) -> dict[str, Any]:
+    """猜你喜欢（可慢加载；优先热门缓存，不再串行打多个上游）。"""
+    if S.api is None:
+        raise HTTPException(503, "服务未就绪")
+    # 不二次拉详情：用索引里的剧 + 前端透传的 tags
+    show = S.show_index.get(id) or find_show(id)
+    tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    if not tag_list and show.tags:
+        tag_list = [str(t) for t in show.tags if t]
+    raw: dict[str, Any] = {"tags": tag_list}
+    try:
+        items = _related_shows(str(show.id or id), raw, limit=limit)
+    except Exception:  # noqa: BLE001
+        items = []
+    return {"ok": True, "id": str(show.id or id), "items": items}
 
 
 @router.get("/play")
@@ -359,9 +409,24 @@ def task_start(tid: str) -> dict[str, Any]:
     return res
 
 
+@router.post("/tasks/{tid}/follow")
+def task_follow(tid: str, body: FollowBody) -> dict[str, Any]:
+    """开启/关闭追更：每日检查新集，只下记录里没有的。"""
+    res = set_task_follow(tid, bool(body.follow))
+    if not res.get("ok"):
+        raise HTTPException(404, res.get("error") or "task not found")
+    return res
+
+
+@router.post("/tasks/follow/check")
+def tasks_follow_check() -> dict[str, Any]:
+    """立刻检查全部追更任务（手动触发）。"""
+    return check_follow_tasks(min_gap=0.0)
+
+
 @router.delete("/tasks/{tid}")
 def task_delete(tid: str) -> dict[str, Any]:
-    """只删任务记录，不动 downloads 里的文件。"""
+    """只删任务记录，不动 downloads 里的文件与完成记录。"""
     t = S.get_task(tid)
     if not t:
         raise HTTPException(404, "task not found")
@@ -439,16 +504,23 @@ def _assert_public_url(url: str) -> None:
 
 @router.get("/cover")
 def cover_proxy(url: str = Query(..., min_length=1)) -> Response:
-    """拉封面：CDN 直下 + 本机 AES 解密（官网同款密钥）。
-
-    远程 CF 封面站常因 TLS 不可达，仅作可选兜底。
-    """
+    """拉封面：CDN 直下 + 本机 AES 解密；命中 data/cover_cache 则直接返回。"""
     assert S.api is not None and S.settings is not None
     # 先拼成绝对地址，不走远程解密站
     final = build_cover_url(url, S.api.base, "", "")
     if not final:
         raise HTTPException(400, "无封面地址")
     _assert_public_url(final)
+
+    hit = CoverDisk.get(final)
+    if hit:
+        data, mime = hit
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={**_COVER_CACHE_HEADERS, "X-Cover-Cache": "HIT"},
+        )
+
     headers = {
         "User-Agent": DEFAULT_HEADERS["User-Agent"],
         "Referer": f"{S.api.base}/",
@@ -468,7 +540,12 @@ def cover_proxy(url: str = Query(..., min_length=1)) -> Response:
         if not is_image_bytes(data):
             data = decrypt_cover_bytes(data)
         mime = sniff_image_mime(data)
-        return Response(content=data, media_type=mime, headers={"Cache-Control": "max-age=600"})
+        CoverDisk.put(final, data, mime)
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={**_COVER_CACHE_HEADERS, "X-Cover-Cache": "MISS"},
+        )
     except Exception as exc:  # noqa: BLE001
         err = str(exc)
 
@@ -482,17 +559,21 @@ def cover_proxy(url: str = Query(..., min_length=1)) -> Response:
             with S.api.open(req, timeout=25) as resp:
                 data = resp.read()
             if data and is_image_bytes(data):
+                mime = sniff_image_mime(data)
+                CoverDisk.put(final, data, mime)
                 return Response(
                     content=data,
-                    media_type=sniff_image_mime(data),
-                    headers={"Cache-Control": "max-age=600"},
+                    media_type=mime,
+                    headers={**_COVER_CACHE_HEADERS, "X-Cover-Cache": "MISS"},
                 )
             if data and not is_image_bytes(data):
                 data = decrypt_cover_bytes(data)
+                mime = sniff_image_mime(data)
+                CoverDisk.put(final, data, mime)
                 return Response(
                     content=data,
-                    media_type=sniff_image_mime(data),
-                    headers={"Cache-Control": "max-age=600"},
+                    media_type=mime,
+                    headers={**_COVER_CACHE_HEADERS, "X-Cover-Cache": "MISS"},
                 )
         except Exception as exc:  # noqa: BLE001
             err = f"{err}; 远程解密也失败: {exc}"

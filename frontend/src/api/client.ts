@@ -54,6 +54,8 @@ export type Task = {
   coverNote?: string;
   coverOk?: boolean | null;
   error?: string;
+  follow?: boolean;
+  followCheckedAt?: number;
   items?: TaskItem[];
 };
 
@@ -167,6 +169,27 @@ export const api = {
     ),
   show: (id: string) =>
     request<ShowDetail>(`/api/show?id=${encodeURIComponent(id)}`),
+  showRelated: async (id: string, tags?: string[]) => {
+    const qs = new URLSearchParams({ id });
+    if (tags?.length) qs.set("tags", tags.filter(Boolean).join(","));
+    try {
+      return await request<{ ok?: boolean; id: string; items: Show[] }>(
+        `/api/related?${qs}`,
+      );
+    } catch (err) {
+      // 旧后端没有 /api/related 时，用热门兜底，避免详情页显示 Not Found
+      const msg = (err as Error).message || "";
+      if (!/not found|404/i.test(msg)) throw err;
+      const hot = await request<{ items: Show[] }>(
+        `/api/catalog?category=hot&page=1&pageSize=20`,
+      );
+      return {
+        ok: true,
+        id,
+        items: (hot.items || []).filter((s) => s.id !== id).slice(0, 8),
+      };
+    }
+  },
   play: (id: string, ep: number) =>
     request<{ id: string; ep: number; url: string }>(
       `/api/play?id=${encodeURIComponent(id)}&ep=${ep}`,
@@ -177,6 +200,8 @@ export const api = {
     episodes?: number[];
     cover?: boolean;
     start?: boolean;
+    force?: boolean;
+    follow?: boolean;
   }) =>
     request<{
       ok: boolean;
@@ -186,6 +211,7 @@ export const api = {
       candidates?: Show[];
       skipped?: boolean;
       reused?: boolean;
+      merged?: boolean;
       message?: string;
     }>("/api/download", { method: "POST", body: JSON.stringify(body) }),
   tasks: () => request<{ ok: boolean; tasks: Task[] }>("/api/tasks"),
@@ -195,6 +221,19 @@ export const api = {
       `/api/tasks/${encodeURIComponent(id)}/start`,
       { method: "POST" },
     ),
+  setTaskFollow: (id: string, follow: boolean) =>
+    request<{ ok: boolean; task?: Task; error?: string }>(
+      `/api/tasks/${encodeURIComponent(id)}/follow`,
+      { method: "POST", body: JSON.stringify({ follow }) },
+    ),
+  checkFollow: () =>
+    request<{
+      ok: boolean;
+      checked: number;
+      enqueued: number;
+      started: number;
+      errors: string[];
+    }>("/api/tasks/follow/check", { method: "POST", body: "{}" }),
   deleteTask: (id: string) =>
     request<{ ok: boolean; id?: string }>(
       `/api/tasks/${encodeURIComponent(id)}`,

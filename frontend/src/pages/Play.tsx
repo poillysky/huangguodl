@@ -95,17 +95,22 @@ export default function PlayPage() {
     setUrl("");
     setCoverBg(true);
 
+    // 取流与补全元数据并行；绝不为了 show 挡住 play
+    void import("artplayer");
+    void import("hls.js");
+
     const load = async () => {
       try {
-        if (!title || !cover || !total) {
-          const show = await api.show(id);
-          if (cancelled) return;
-          setTitle(show.title);
-          setCover(show.cover);
-          setTotal(show.total || show.episodes.length);
-        }
-        const play = await api.play(id, ep);
+        const needMeta = !title || !cover || !total;
+        const playP = api.play(id, ep);
+        const showP = needMeta ? api.show(id) : null;
+        const [play, show] = await Promise.all([playP, showP]);
         if (cancelled) return;
+        if (show) {
+          setTitle((t) => t || show.title);
+          setCover((c) => c || show.cover);
+          setTotal((n) => n || show.total || show.episodes.length);
+        }
         setUrl(play.url);
       } catch (e) {
         if (!cancelled) setError((e as Error).message);

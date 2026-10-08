@@ -49,7 +49,14 @@ export default function TasksPage() {
         for (const t of r.tasks) {
           const { done } = taskCounts(t);
           const plan = t.plan?.length ?? 0;
-          if (plan === 0 && done === 0 && t.status !== "running") continue;
+          if (
+            plan === 0 &&
+            done === 0 &&
+            t.status !== "running" &&
+            !t.follow
+          ) {
+            continue;
+          }
           const key = t.vid || t.title;
           if (key && seen.has(key)) continue;
           if (key) seen.add(key);
@@ -150,22 +157,41 @@ export default function TasksPage() {
         id: t.vid || undefined,
         cover: true,
         start: true,
+        force: true,
+        follow: Boolean(t.follow),
       });
       if (!res.ok) {
         setError(res.error || "重新下载失败");
         return;
       }
       if (res.skipped) {
-        setNotice(res.message || "本地已全部完整，无需重下");
+        setNotice(res.message || "没有可重下的集");
         return;
       }
-      setNotice(res.message || "已重新排队并开始下载");
+      setNotice(res.message || "已覆盖重下并开始");
       if (res.taskId) setActiveId(res.taskId);
       await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setRedoingId(null);
+    }
+  }
+
+  async function onToggleFollow(t: Task, e: MouseEvent) {
+    e.stopPropagation();
+    setError("");
+    setNotice("");
+    try {
+      const res = await api.setTaskFollow(t.id, !t.follow);
+      if (!res.ok) {
+        setError(res.error || "追更设置失败");
+        return;
+      }
+      setNotice(res.task?.follow ? "已开启追更（每日只下新增）" : "已关闭追更");
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
     }
   }
 
@@ -217,7 +243,7 @@ export default function TasksPage() {
           </div>
           <h2 className="fav-empty-title">还没有下载任务</h2>
           <p className="fav-empty-desc">
-            打开一部剧，在详情页点「加入下载」，回来再手动开始。
+            打开一部剧点「加入下载」，以完成记录为准跳过已下集；可开追更每日只补新集。
           </p>
           <button
             type="button"
@@ -277,6 +303,7 @@ export default function TasksPage() {
                   {fail > 0 ? ` · ${fail}失败` : ""}
                   {t.status === "running" ? " · 下载中" : ""}
                   {t.status === "done" ? " · 完成" : ""}
+                  {t.follow ? " · 追更" : ""}
                   {t.status !== "running" ? (
                     <span className="task-row-time"> · {formatTime(t.created)}</span>
                   ) : null}
@@ -294,6 +321,15 @@ export default function TasksPage() {
                         : t.status === "error"
                           ? "重试"
                           : "开始"}
+                    </button>
+                  ) : null}
+                  {t.status !== "running" ? (
+                    <button
+                      type="button"
+                      className={`task-row-action${t.follow ? " on" : ""}`}
+                      onClick={(e) => void onToggleFollow(t, e)}
+                    >
+                      {t.follow ? "追更中" : "追更"}
                     </button>
                   ) : null}
                   {t.status === "done" ? (

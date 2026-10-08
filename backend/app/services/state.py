@@ -23,6 +23,8 @@ from ..paths import (
     ensure_dir,
     migrate_runtime_files,
 )
+from .completions import C
+from .cover_cache import CoverDisk
 from .runtime_settings import R
 
 
@@ -68,6 +70,13 @@ class AppState:
         self.event_conds = {}
         self.tasks = self._load_tasks()
         self.favorites = self._load_favorites()
+        C.bind(data)
+        CoverDisk.bind(data)
+        # 用历史任务 ok/exist 补全完成记录（只增不减）
+        try:
+            C.ingest_task_items(list(self.tasks.values()))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _tasks_path(self) -> str:
         return os.path.join(self.data_dir, TASKS_NAME)

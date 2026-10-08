@@ -23,6 +23,8 @@ from .services.state import S  # noqa: E402
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from .services.follow import start_follow_loop, stop_follow_loop
+
     settings = get_settings()
     os.environ.setdefault("HG_API", settings.hg_api)
     if settings.cover_proxy:
@@ -30,7 +32,11 @@ async def lifespan(_app: FastAPI):
     if settings.cover_token:
         os.environ.setdefault("COVER_TOKEN", settings.cover_token)
     S.init(settings)
-    yield
+    start_follow_loop()
+    try:
+        yield
+    finally:
+        stop_follow_loop()
 
 
 app = FastAPI(title="hg-dl", version="1.0.0", lifespan=lifespan)

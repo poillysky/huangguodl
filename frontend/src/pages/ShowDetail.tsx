@@ -23,7 +23,10 @@ export default function ShowDetailPage() {
   const seed = (loc.state as Show | null) || null;
 
   const [detail, setDetail] = useState<ShowDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [related, setRelated] = useState<Show[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [relatedErr, setRelatedErr] = useState("");
+  const [loading, setLoading] = useState(!seed);
   const [descOpen, setDescOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,28 +36,76 @@ export default function ShowDetailPage() {
   const epGridRef = useRef<HTMLDivElement | null>(null);
   const { favorited, busy: favBusy, toggle: toggleFav } = useFavorite(id, seed);
 
-  const loadDetail = useCallback(
-    (opts?: { scrollTop?: boolean }) => {
-      setLoading(true);
-      setError("");
-      setDescOpen(false);
-      if (opts?.scrollTop) {
-        const scroller = document.querySelector(".page-scroll");
-        if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
-        else window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-      return api
-        .show(id)
-        .then((r) => setDetail(r))
-        .catch((e: Error) => setError(e.message))
-        .finally(() => setLoading(false));
-    },
-    [id],
-  );
-
+  // 详情：只跟 id，不跟 seed（避免反复重建把推荐请求冲掉）
   useEffect(() => {
-    void loadDetail({ scrollTop: true });
-  }, [loadDetail]);
+    let cancelled = false;
+    setDetail(null);
+    setError("");
+    setDescOpen(false);
+    setMsg("");
+    if (!seed) setLoading(true);
+    const scroller = document.querySelector(".page-scroll");
+    if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
+    else window.scrollTo({ top: 0, behavior: "smooth" });
+
+    void api
+      .show(id)
+      .then((r) => {
+        if (!cancelled) setDetail(r);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- seed 仅作首屏占位
+
+  // 猜你喜欢：详情就绪后再拉，与首屏解耦
+  useEffect(() => {
+    const sid = detail?.id;
+    if (!sid) {
+      setRelated([]);
+      setRelatedLoading(false);
+      setRelatedErr("");
+      return;
+    }
+    let cancelled = false;
+    setRelated([]);
+    setRelatedErr("");
+    setRelatedLoading(true);
+    void api
+      .showRelated(sid, detail?.tags || seed?.tags || [])
+      .then((r) => {
+        if (cancelled) return;
+        setRelated(Array.isArray(r.items) ? r.items : []);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setRelated([]);
+        setRelatedErr(e.message || "推荐加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setRelatedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.id]);
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    setError("");
+    return api
+      .show(id)
+      .then((r) => setDetail(r))
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   useEffect(() => {
     setEpOpen(false);
@@ -91,6 +142,9 @@ export default function ShowDetailPage() {
   const coverSrc = cover ? api.coverUrl(cover) : "";
 
   function goPlay(n: number) {
+    // 点选集时就开始拉播放器包，进页少等一轮
+    void import("artplayer");
+    void import("hls.js");
     nav(`/play/${encodeURIComponent(id)}/${n}`, {
       state: {
         title,
@@ -108,15 +162,17 @@ export default function ShowDetailPage() {
     try {
       const res = await api.download({
         title,
+        id: id || undefined,
         episodes: eps.map((e) => e.n),
         cover: true,
+        follow: !(detail?.finished ?? seed?.finished),
       });
       if (!res.ok) {
         setError(res.error || "下载启动失败");
         return;
       }
       if (res.skipped) {
-        setMsg(res.message || "本地已全部存在");
+        setMsg(res.message || "完成记录显示已全部下过");
         return;
       }
       if (res.reused) {
@@ -153,7 +209,7 @@ export default function ShowDetailPage() {
       title={title}
       back="/"
       subtitle={detail?.channel || undefined}
-      onRefresh={() => loadDetail()}
+      onRefresh={() => refresh()}
     >
       <div className="detail-hero">
         <div className="detail-cover">
@@ -164,13 +220,15 @@ export default function ShowDetailPage() {
             <img
               src={coverSrc}
               alt=""
+              fetchPriority="high"
+              decoding="async"
               onError={(e) => {
                 e.currentTarget.style.display = "none";
               }}
             />
           ) : null}
           <span className="mark">18+</span>
-          {detail?.finished ? (
+          {(detail?.finished ?? seed?.finished) ? (
             <span className="status-badge done">完结</span>
           ) : (
             <span className="status-badge air">连载</span>
@@ -197,13 +255,13 @@ export default function ShowDetailPage() {
               </span>
             ) : null}
             <span className="stat">
-              <em>{detail?.total || eps.length || "?"}</em>集
+              <em>{detail?.total || eps.length || seed?.total || "?"}</em>集
             </span>
           </div>
 
-          {!!detail?.tags?.length && (
+          {!!(detail?.tags?.length || seed?.tags?.length) && (
             <div className="tag-row">
-              {detail.tags.map((t) => (
+              {(detail?.tags || seed?.tags || []).map((t) => (
                 <span key={t} className="tag-pill">
                   {t}
                 </span>
@@ -302,16 +360,25 @@ export default function ShowDetailPage() {
       {error && <p className="err banner">{error}</p>}
       {msg && <p className="ok banner">{msg}</p>}
 
-      {!!detail?.related?.length && (
+      {detail ? (
         <div className="detail-section related-section">
           <div className="block-head">
             <h2>猜你喜欢</h2>
+            {relatedLoading ? <span className="muted">加载中…</span> : null}
           </div>
-          <ShowGrid items={detail.related} variant="rail" />
+          {related.length > 0 ? (
+            <ShowGrid items={related} variant="rail" />
+          ) : relatedLoading ? (
+            <p className="muted related-placeholder">正在拉取推荐…</p>
+          ) : (
+            <p className="muted related-placeholder">
+              {relatedErr || "暂无推荐"}
+            </p>
+          )}
         </div>
-      )}
+      ) : null}
 
-      <PageLoading show={loading} />
+      <PageLoading show={loading && !seed} />
     </PageShell>
   );
 }

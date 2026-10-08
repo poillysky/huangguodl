@@ -8,19 +8,20 @@ import traceback
 from typing import Any
 
 from hg_core import (
+    Job,
     Show,
     already_done,
-    build_jobs,
     cover_path,
     download,
     download_cover,
     ensure_emby_metadata,
     parse_ep_filter,
-    scan_local,
+    remove_episode_media,
     show_dir,
     target_path,
 )
 
+from .completions import C
 from .state import S
 
 _run_lock = threading.Lock()
@@ -41,9 +42,9 @@ def _ep_semaphore() -> threading.Semaphore:
     return _ep_sema
 
 
-def _download_guarded(job: Any, api: Any, out_dir: str) -> Any:
+def _download_guarded(job: Any, api: Any, out_dir: str, *, force: bool = False) -> Any:
     with _ep_semaphore():
-        return download(job, api, out_dir, timeout=60, retries=3)
+        return download(job, api, out_dir, timeout=60, retries=3, force=force)
 
 
 class _CoverArgs:
@@ -93,10 +94,60 @@ def find_show(tid: str) -> Show:
     return Show(id=tid, title="")
 
 
+def _plan_by_records(
+    show: Show,
+    eps: list[dict[str, Any]],
+    *,
+    ep_filter: set[int] | None,
+    out_dir: str,
+    force: bool = False,
+) -> tuple[list[Job], list[int]]:
+    """按完成记录规划待下集；force 时清记录并删本地后全部重下。"""
+    done = set() if force else C.done_eps(show.id)
+    jobs: list[Job] = []
+    have: list[int] = []
+    for e in eps:
+        n = int(e["n"])
+        if ep_filter and n not in ep_filter:
+            continue
+        ext = os.path.splitext(e.get("url", "") or "")[1] or ".mp4"
+        path = target_path(show, n, ext, out_dir)
+        if force:
+            C.unmark(show.id, n)
+            remove_episode_media(show, n, out_dir, ext)
+            jobs.append(
+                Job(
+                    show=show,
+                    ep=n,
+                    ep_title=str(e.get("title") or ""),
+                    preset_url=str(e.get("url") or ""),
+                    path=path,
+                )
+            )
+            continue
+        if n in done:
+            have.append(n)
+            continue
+        jobs.append(
+            Job(
+                show=show,
+                ep=n,
+                ep_title=str(e.get("title") or ""),
+                preset_url=str(e.get("url") or ""),
+                path=path,
+            )
+        )
+    return jobs, have
+
+
+def _mark_item_done(show: Show, ep: int) -> None:
+    C.mark(show.id, ep, title=show.title)
+
+
 def start_download(body: dict[str, Any]) -> dict[str, Any]:
     """创建下载任务（默认排队，不自动跑）。body.start=true 时立刻开始。
 
-    本地完整集跳过；残缺/假文件会删掉后重下（覆盖原路径）。
+    以完成记录为准跳过；force=true 时清记录并覆盖本地重下。
     """
     assert S.api is not None and S.settings is not None
     title = str(body.get("title") or "").strip()
@@ -108,16 +159,16 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
     with_cover = bool(body.get("cover", True))
     out_dir = os.path.abspath(body.get("out") or S.out_dir)
     workers = max(1, min(8, int(body.get("workers") or S.settings.workers)))
-    scan_dir = body.get("scan_dir") or S.settings.scan_dir or ""
     threshold = float(body.get("threshold") or 0.62)
     auto_start = bool(body.get("start", False))
+    force = bool(body.get("force", False))
+    follow = bool(body.get("follow", False))
 
     show = None
     score = 1.0
     cands: list[Any] = []
     if vid:
         found = find_show(vid)
-        # find_show 总会带回 id；标题空时用任务里的剧名补上
         show = Show(
             id=vid,
             title=(found.title or title or vid).strip(),
@@ -140,18 +191,19 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
 
     S.show_index[show.id] = show
     eps = S.api.episodes(show)
-    local_map = scan_local(scan_dir) if scan_dir and os.path.isdir(scan_dir) else {}
-    jobs, have = build_jobs(
-        show, eps, ep_filter=ep_filter, local_map=local_map,
-        out_dir=out_dir,
+    jobs, have = _plan_by_records(
+        show, eps, ep_filter=ep_filter, out_dir=out_dir, force=force,
     )
 
-    # 同剧已有排队/下载中：直接复用，不叠一张空卡
+    # 同剧已有排队/下载中：直接复用
     for existing in S.all_tasks():
         if existing.get("vid") == show.id and existing.get("status") in (
             "queued",
             "running",
         ):
+            if follow and not existing.get("follow"):
+                existing["follow"] = True
+                S.put_task(existing)
             return {
                 "ok": True,
                 "reused": True,
@@ -160,25 +212,73 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
                 "message": "已有进行中的任务",
             }
 
+    # 追更：同剧已有完成任务时，把新增集并入该任务
+    if jobs and not force:
+        for existing in list(S.all_tasks()):
+            if existing.get("vid") != show.id:
+                continue
+            if existing.get("status") not in ("done", "error", "queued"):
+                continue
+            if existing.get("status") == "queued":
+                continue
+            merged = _merge_new_eps_into_task(existing, show, jobs, eps, out_dir)
+            if merged is not None:
+                if follow:
+                    merged["follow"] = True
+                S.put_task(merged)
+                msg = f"已并入原任务，新增 {len(jobs)} 集"
+                if auto_start and merged.get("status") == "queued":
+                    kicked = run_download(str(merged["id"]))
+                    if not kicked.get("ok"):
+                        return kicked
+                    return {
+                        "ok": True,
+                        "taskId": merged["id"],
+                        "task": kicked.get("task") or _public_task(merged),
+                        "message": msg,
+                        "merged": True,
+                    }
+                return {
+                    "ok": True,
+                    "taskId": merged["id"],
+                    "task": _public_task(merged),
+                    "message": msg,
+                    "merged": True,
+                }
+
+    if not jobs and follow:
+        for existing in list(S.all_tasks()):
+            if existing.get("vid") == show.id:
+                existing["follow"] = True
+                S.put_task(existing)
+                return {
+                    "ok": True,
+                    "reused": True,
+                    "taskId": existing["id"],
+                    "task": _public_task(existing),
+                    "message": "已开启追更，当前无新增集",
+                }
+
     poster = cover_path(show, out_dir)
     poster_ok = os.path.isfile(poster) and os.path.getsize(poster) > 1024
-    # 仅当本地媒体完整（残缺/假 mp4 不算）才跳过；旧「已完成」记录不挡重下
-    if not jobs and (poster_ok or not with_cover):
+    if not jobs and (poster_ok or not with_cover) and not follow:
         return {
             "ok": True,
             "skipped": True,
             "taskId": None,
             "task": None,
-            "message": "本地已全部存在，未新建任务",
+            "message": "完成记录显示已全部下过，未新建任务",
         }
 
-    # 同剧旧的完成/失败记录：本地还缺货时清掉，避免列表里「已完成」误导
-    if jobs:
+    # 强制重下或新建：清掉同剧旧完成/失败卡（追更任务会保留由上面 merge 处理）
+    if force or jobs:
         for existing in list(S.all_tasks()):
             if existing.get("vid") == show.id and existing.get("status") in (
                 "done",
                 "error",
             ):
+                if existing.get("follow") and not force and not jobs:
+                    continue
                 S.drop_task(str(existing["id"]))
 
     tid = f"t{int(time.time() * 1000) % 10**10}"
@@ -192,7 +292,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
             items.append({
                 "ep": n,
                 "status": "ok",
-                "note": "已存在",
+                "note": "记录已有",
                 "path": target_path(show, n, ".mp4", out_dir),
             })
         else:
@@ -201,13 +301,25 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
                 items.append({
                     "ep": j.ep,
                     "status": "pending",
-                    "note": "",
+                    "note": "覆盖重下" if force else "",
                     "path": j.path,
                 })
+    # 仅追更且当前无新增：仍建一条空计划任务，方便挂追更开关
+    if not items and follow:
+        for e in eps:
+            n = int(e["n"])
+            items.append({
+                "ep": n,
+                "status": "ok",
+                "note": "记录已有",
+                "path": target_path(show, n, ".mp4", out_dir),
+            })
+            have.append(n)
+
     task: dict[str, Any] = {
         "id": tid,
         "created": time.time(),
-        "status": "queued",
+        "status": "queued" if jobs else "done",
         "title": show.title,
         "vid": show.id,
         "out": out_dir,
@@ -222,18 +334,25 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
         "fail": 0,
         "coverNote": "",
         "coverOk": None,
+        "follow": follow,
+        "followCheckedAt": 0.0,
+        "forceOnce": force,
         "items": items,
     }
     S.put_task(task)
     S.push_event(tid, {"type": "queued", "task": _public_task(task)})
 
     msg = None
-    if have and jobs:
-        msg = f"本地完整 {len(have)} 集已跳过，将补下 {len(jobs)} 集"
+    if force and jobs:
+        msg = f"将覆盖重下 {len(jobs)} 集"
+    elif have and jobs:
+        msg = f"记录已有 {len(have)} 集已跳过，将补下 {len(jobs)} 集"
     elif jobs and not have:
-        msg = f"将下载 {len(jobs)} 集（含残缺重下）"
+        msg = f"将下载 {len(jobs)} 集"
+    elif follow and not jobs:
+        msg = "已开启追更，当前无新增集"
 
-    if auto_start:
+    if auto_start and jobs:
         kicked = run_download(tid)
         if not kicked.get("ok"):
             return kicked
@@ -245,6 +364,85 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
         }
 
     return {"ok": True, "taskId": tid, "task": _public_task(task), "message": msg}
+
+
+def _merge_new_eps_into_task(
+    task: dict[str, Any],
+    show: Show,
+    jobs: list[Job],
+    eps: list[dict[str, Any]],
+    out_dir: str,
+) -> dict[str, Any] | None:
+    """把新增 Job 并入已有任务；无待下集返回 None。"""
+    if not jobs:
+        return None
+    by_item = {int(it["ep"]): it for it in (task.get("items") or [])}
+    changed = False
+    for j in jobs:
+        it = by_item.get(j.ep)
+        if it is None:
+            task.setdefault("items", []).append({
+                "ep": j.ep,
+                "status": "pending",
+                "note": "追更新增",
+                "path": j.path,
+            })
+            by_item[j.ep] = task["items"][-1]
+            changed = True
+        elif it.get("status") in ("ok", "exist", "fail"):
+            it["status"] = "pending"
+            it["note"] = "追更新增" if it.get("status") in ("ok", "exist") else ""
+            it["path"] = j.path
+            changed = True
+
+    # 远端已有、记录也有、任务里还没有的集补成 ok
+    recorded = C.done_eps(show.id)
+    for e in eps:
+        n = int(e["n"])
+        if n in by_item:
+            continue
+        if n in recorded:
+            task.setdefault("items", []).append({
+                "ep": n,
+                "status": "ok",
+                "note": "记录已有",
+                "path": target_path(show, n, ".mp4", out_dir),
+            })
+            by_item[n] = task["items"][-1]
+
+    plan = [
+        int(it["ep"])
+        for it in (task.get("items") or [])
+        if it.get("status") not in ("ok", "exist")
+    ]
+    if not plan or not changed:
+        return None
+    task["plan"] = plan
+    task["total"] = max(int(task.get("total") or 0), len(eps))
+    task["have"] = [
+        int(it["ep"])
+        for it in (task.get("items") or [])
+        if it.get("status") in ("ok", "exist")
+    ]
+    task["done"] = len(task["have"])
+    task["fail"] = sum(
+        1 for it in (task.get("items") or []) if it.get("status") == "fail"
+    )
+    task["status"] = "queued"
+    task["error"] = ""
+    task["forceOnce"] = False
+    return task
+
+
+def set_task_follow(tid: str, follow: bool) -> dict[str, Any]:
+    task = S.get_task(tid)
+    if not task:
+        return {"ok": False, "error": "任务不存在"}
+    task["follow"] = bool(follow)
+    if follow and not task.get("followCheckedAt"):
+        task["followCheckedAt"] = 0.0
+    S.put_task(task)
+    return {"ok": True, "task": _public_task(task)}
 
 
 def run_download(tid: str) -> dict[str, Any]:
@@ -282,14 +480,14 @@ def run_download(tid: str) -> dict[str, Any]:
     out_dir = os.path.abspath(task.get("out") or S.out_dir)
     workers = max(1, min(8, int(task.get("workers") or S.settings.workers)))
     with_cover = bool(task.get("cover", True))
+    force = bool(task.get("forceOnce"))
     plan = [int(x) for x in (task.get("plan") or [])]
     ep_filter = set(plan) if plan else None
 
     try:
         eps = S.api.episodes(show)
-        jobs, _have = build_jobs(
-            show, eps, ep_filter=ep_filter, local_map={},
-            out_dir=out_dir,
+        jobs, _have = _plan_by_records(
+            show, eps, ep_filter=ep_filter, out_dir=out_dir, force=force,
         )
     except Exception as exc:  # noqa: BLE001
         with _run_lock:
@@ -299,22 +497,25 @@ def run_download(tid: str) -> dict[str, Any]:
         S.put_task(task)
         return {"ok": False, "error": str(exc), "task": _public_task(task)}
 
-    # 同步 items 路径；磁盘不完整的「ok」一律打回重下
     by_ep = {j.ep: j for j in jobs}
     for it in task.get("items") or []:
         n = int(it["ep"])
         j = by_ep.get(n)
         path = (j.path if j else "") or target_path(show, n, ".mp4", out_dir)
         it["path"] = path
-        if it.get("status") in ("ok", "exist") and already_done(path):
-            it["status"] = "exist" if it.get("status") == "exist" else "ok"
+        if not force and n in C.done_eps(show.id):
+            it["status"] = "ok"
+            it["note"] = it.get("note") or "记录已有"
             continue
         if n in by_ep:
             it["status"] = "pending"
-            it["note"] = ""
-        elif already_done(path):
+            if force:
+                it["note"] = "覆盖重下"
+            elif not it.get("note"):
+                it["note"] = ""
+        elif n in C.done_eps(show.id):
             it["status"] = "ok"
-            it["note"] = "已存在"
+            it["note"] = "记录已有"
         else:
             it["status"] = "pending"
             it["note"] = ""
@@ -360,16 +561,19 @@ def run_download(tid: str) -> dict[str, Any]:
                 S.push_event(tid, {"type": "cover", "ok": good, "note": note})
             with futures.ThreadPoolExecutor(max_workers=workers) as pool:
                 futs = {
-                    pool.submit(_download_guarded, j, S.api, out_dir): j
+                    pool.submit(
+                        _download_guarded, j, S.api, out_dir, force=force,
+                    ): j
                     for j in pending_jobs
                 }
                 for fut in futures.as_completed(futs):
                     j = fut.result()
-                    # exist 也算完成；假成功（无有效文件）打成失败
                     if j.status in ("ok", "exist"):
                         check = j.path or target_path(show, j.ep, ".mp4", out_dir)
                         if not already_done(check):
                             j.status, j.note = "fail", j.note or "落盘无效"
+                        else:
+                            _mark_item_done(show, j.ep)
                     for it in task["items"]:
                         if it["ep"] == j.ep:
                             it["status"] = j.status
@@ -391,12 +595,20 @@ def run_download(tid: str) -> dict[str, Any]:
                     })
                     S.persist_tasks_soon()
             task["status"] = "done"
+            task["forceOnce"] = False
+            task["plan"] = []
+            task["have"] = [
+                int(it["ep"])
+                for it in (task.get("items") or [])
+                if it.get("status") in ("ok", "exist")
+            ]
             S.put_task(task)
             S.push_event(tid, {"type": "done", "task": _public_task(task)})
         except Exception as exc:  # noqa: BLE001
             task["status"] = "error"
             task["error"] = str(exc)
             task["trace"] = traceback.format_exc()[-1500:]
+            task["forceOnce"] = False
             S.put_task(task)
             S.push_event(tid, {"type": "error", "error": str(exc)})
         finally:
@@ -410,6 +622,96 @@ def run_download(tid: str) -> dict[str, Any]:
 
     threading.Thread(target=work, daemon=True).start()
     return {"ok": True, "task": _public_task(task)}
+
+
+def check_follow_tasks(*, min_gap: float = 0.0) -> dict[str, Any]:
+    """检查开启追更的任务，只排队下载记录里没有的新集。
+
+    min_gap>0 时跳过距上次检查不足间隔的任务（后台日更用）。
+    """
+    assert S.api is not None and S.settings is not None
+    checked = 0
+    enqueued = 0
+    started = 0
+    errors: list[str] = []
+    now = time.time()
+    for task in list(S.all_tasks()):
+        if not task.get("follow"):
+            continue
+        if task.get("status") == "running":
+            continue
+        last = float(task.get("followCheckedAt") or 0)
+        if min_gap > 0 and last > 0 and (now - last) < min_gap:
+            continue
+        vid = str(task.get("vid") or "").strip()
+        if not vid:
+            continue
+        checked += 1
+        try:
+            show = find_show(vid)
+            if not show.title:
+                show = Show(
+                    id=vid,
+                    title=str(task.get("title") or vid),
+                    total=int(task.get("total") or 0),
+                )
+            # 刷新详情 finished / total
+            try:
+                detail = S.api.detail(show)
+                if isinstance(detail, dict):
+                    s2 = S.api._to_show(detail)
+                    if s2:
+                        show = s2
+                        S.show_index[show.id] = show
+            except Exception:  # noqa: BLE001
+                pass
+            eps = S.api.episodes(show)
+            out_dir = os.path.abspath(task.get("out") or S.out_dir)
+            jobs, _have = _plan_by_records(
+                show, eps, ep_filter=None, out_dir=out_dir, force=False,
+            )
+            task["followCheckedAt"] = now
+            task["total"] = len(eps)
+            if not jobs:
+                S.put_task(task)
+                continue
+            merged = _merge_new_eps_into_task(task, show, jobs, eps, out_dir)
+            if not merged:
+                # 任务里没有 items 时直接补
+                for j in jobs:
+                    task.setdefault("items", []).append({
+                        "ep": j.ep,
+                        "status": "pending",
+                        "note": "追更新增",
+                        "path": j.path,
+                    })
+                task["plan"] = [j.ep for j in jobs]
+                task["status"] = "queued"
+                task["error"] = ""
+                merged = task
+            S.put_task(merged)
+            enqueued += len(merged.get("plan") or [])
+            kicked = run_download(str(merged["id"]))
+            if kicked.get("ok"):
+                started += 1
+            else:
+                errors.append(
+                    f"{merged.get('title')}: {kicked.get('error') or '无法开始'}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{task.get('title') or vid}: {exc}")
+            try:
+                task["followCheckedAt"] = now
+                S.put_task(task)
+            except Exception:  # noqa: BLE001
+                pass
+    return {
+        "ok": True,
+        "checked": checked,
+        "enqueued": enqueued,
+        "started": started,
+        "errors": errors,
+    }
 
 
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -454,5 +756,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "coverNote": task.get("coverNote"),
         "coverOk": task.get("coverOk"),
         "error": task.get("error"),
+        "follow": bool(task.get("follow")),
+        "followCheckedAt": float(task.get("followCheckedAt") or 0),
         "items": items_out,
     }

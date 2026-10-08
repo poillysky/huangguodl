@@ -10,6 +10,7 @@ SETTINGS_NAME = "settings.json"
 CACHE_NAME = "cache.json"
 TASKS_NAME = "tasks.json"
 FAVORITES_NAME = "favorites.json"
+COMPLETED_NAME = "completions.json"
 
 # legacy locations (pre data/ split)
 _LEGACY_SETTINGS = (".hg_settings.json",)

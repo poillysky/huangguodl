@@ -41,6 +41,8 @@ export default function ShowGrid({
                   src={api.coverUrl(s.cover)}
                   alt=""
                   loading="lazy"
+                  decoding="async"
+                  fetchPriority="low"
                   onError={(e) => {
                     e.currentTarget.style.display = "none";
                   }}
