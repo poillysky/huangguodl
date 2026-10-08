@@ -542,29 +542,43 @@ class HGApi:
         return items
 
     def _catalog_tag(self, slug: str, page: int, sort: str = "new") -> list[dict]:
+        """题材目录：必须以官方 /tag/{slug}/ 为准。
+
+        /api/videos?tag= 多数环境会忽略 tag，热度排序时会退回全站热门，
+        表现为「题材筛选失效」。故优先抓 HTML 标签页；失败再用中文名搜索。
+        """
         slug = (slug or "").strip().strip("/")
         if not slug:
             return []
         sort = "hot" if sort == "hot" else "new"
-        # 热度：走 JSON API（HTML 题材页顺序不稳且难切 sort）
-        if sort == "hot":
-            return self._items(self._get(
-                f"{self.base}/api/videos?" + urllib.parse.urlencode(
-                    {"page": page, "page_size": 24, "sort": "hot", "tag": slug})))
-        path = f"/tag/{urllib.parse.quote(slug)}/" if page <= 1 else (
-            f"/tag/{urllib.parse.quote(slug)}/page/{page}/"
+        path = (
+            f"/tag/{urllib.parse.quote(slug)}/"
+            if page <= 1
+            else f"/tag/{urllib.parse.quote(slug)}/page/{page}/"
         )
         try:
             html = self._get_text(self.base + path)
             items = self._parse_tag_page(html)
             if items:
+                if sort == "hot":
+                    items = sorted(
+                        items,
+                        key=lambda x: int(x.get("hot") or x.get("heat") or 0),
+                        reverse=True,
+                    )
                 return items
         except RuntimeError as exc:
             log(f"标签页不可用 {path}: {exc}", level="warn")
-        # 旧接口兜底（多数环境会忽略 tag 参数）
-        return self._items(self._get(
-            f"{self.base}/api/videos?" + urllib.parse.urlencode(
-                {"page": page, "page_size": 24, "sort": "new", "tag": slug})))
+
+        # 搜索中文题材名（比无效的 ?tag= 可靠）
+        label = CATEGORIES.get(f"tag:{slug}", "") or slug
+        try:
+            shows = self.search(label, page)
+            if shows:
+                return [asdict(s) for s in shows]
+        except RuntimeError as exc:
+            log(f"题材搜索兜底失败 {label}: {exc}", level="warn")
+        return []
 
     # -- 目录 ------------------------------------------------------------
     def catalog(

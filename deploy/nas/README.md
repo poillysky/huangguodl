@@ -1,6 +1,6 @@
 # NAS 部署黄果（huangguodl）
 
-单一镜像：`poillysky/huangguodl:v1.0.4`  
+单一镜像：`poillysky/huangguodl:v1.0.5`  
 配置写在 `docker-compose.yml` 里，**不需要 `.env`**。
 
 ## 目录

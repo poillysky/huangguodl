@@ -63,13 +63,10 @@ const GENRES = [
   { id: "luanlun", label: "乱伦" },
 ] as const;
 
-const GENRE_LABEL: Record<string, string> = Object.fromEntries(
-  GENRES.filter((g) => g.id !== "all").map((g) => [g.id, g.label]),
-);
-
 function catalogKey(kind: string, genre: string, sort: "hot" | "new") {
-  if (kind !== "all") return kind;
+  // 题材优先走官方 /tag/{slug}/，避免频道接口盖掉题材
   if (genre !== "all") return `tag:${genre}`;
+  if (kind !== "all") return kind;
   return sort;
 }
 
@@ -100,18 +97,13 @@ export default function BrowsePage() {
   );
 
   const items = useMemo(() => {
-    const genreLabel = genre === "all" ? "" : GENRE_LABEL[genre] || genre;
+    // 题材已由后端 /tag/{slug}/ 筛过；这里只做完结/连载
     return source.filter((s) => {
       if (status === "done" && !s.finished) return false;
       if (status === "air" && s.finished) return false;
-      // 频道 + 题材：频道走官方接口，题材再按 tags 收窄
-      if (kind !== "all" && genreLabel) {
-        const blob = `${s.title} ${(s.tags || []).join(" ")}`;
-        if (!blob.includes(genreLabel)) return false;
-      }
       return true;
     });
-  }, [source, status, kind, genre]);
+  }, [source, status]);
 
   return (
     <PageShell title="分类" onRefresh={refresh}>
