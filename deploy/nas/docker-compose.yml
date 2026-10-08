@@ -1,34 +1,32 @@
-# 黄果 hg-dl — NAS 部署（单一镜像）
-# 目录建议：/vol1/1000/Docker/huangguodl
+# 黄果 hg-dl — NAS 部署（单一镜像，无 .env）
+# 放在：/vol1/1000/Docker/huangguodl
 
 services:
   huangguodl:
-    image: ${DOCKERHUB_USER:-poillysky}/huangguodl:${IMAGE_TAG:-latest}
+    image: poillysky/huangguodl:latest
     container_name: huangguodl
     restart: always
     ports:
-      - "${WEB_PORT:-8080}:8080"
+      - "8080:8080"
     environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      HG_API: ${HG_API:-https://huangguoai.com}
-      COVER_PROXY: ${COVER_PROXY:-https://ai.wulii.de5.net}
-      COVER_TOKEN: ${COVER_TOKEN:-}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      HTTPS_PROXY: ${HTTP_PROXY:-}
-      API_TOKEN: ${API_TOKEN:-}
+      TZ: Asia/Shanghai
+      HG_API: https://huangguoai.com
+      COVER_PROXY: https://ai.wulii.de5.net
+      COVER_TOKEN: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      API_TOKEN: ""
       OUT_DIR: /data/downloads
       DATA_DIR: /data/config
       STATIC_DIR: /app/static
       HOST: 0.0.0.0
-      PORT: 8080
-      WORKERS: ${WORKERS:-3}
-      MAX_PARALLEL_TASKS: ${MAX_PARALLEL_TASKS:-2}
-      MAX_GLOBAL_WORKERS: ${MAX_GLOBAL_WORKERS:-4}
+      PORT: "8080"
+      WORKERS: "3"
+      MAX_PARALLEL_TASKS: "2"
+      MAX_GLOBAL_WORKERS: "4"
     volumes:
-      # 下载 → 115 同步目录「黄果」
-      - ${HOST_DOWNLOADS:-/vol1/1000/Sync/115上传/黄果}:/data/downloads
-      # 配置 / 任务 / 收藏
-      - ${HOST_CONFIG:-/vol1/1000/Docker/huangguodl/config}:/data/config
+      - /vol1/1000/Sync/115上传/黄果:/data/downloads
+      - /vol1/1000/Docker/huangguodl/config:/data/config
     healthcheck:
       test:
         [

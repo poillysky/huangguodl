@@ -206,10 +206,10 @@ cd frontend && npm install && npm run dev -- --host 0.0.0.0
 docker compose up -d --build
 # http://localhost:8080
 
-# NAS：见 deploy/nas/（拉 Hub 镜像 + 绑定宿主机目录）
-# cp deploy/nas/.env.example deploy/nas/.env && 改路径后
+# NAS：见 deploy/nas/（compose 内写死路径，无需 .env）
 # cd deploy/nas && docker compose pull && docker compose up -d
 ```
+
 
 并发相关环境变量（见 `.env.example`）：`WORKERS`（单任务线程池）、`MAX_PARALLEL_TASKS`（同时进行的剧）、`MAX_GLOBAL_WORKERS`（跨任务分集下载总闸）。
 
