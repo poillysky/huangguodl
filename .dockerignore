@@ -1,8 +1,10 @@
 **/__pycache__
 **/*.pyc
 .git
+.github
 .hg_cache.json
 downloads
+data/*.json
 frontend/node_modules
 frontend/dist
 **/.env
@@ -13,3 +15,4 @@ legacy
 tests
 *.md
 !backend/requirements.txt
+frontend/scripts

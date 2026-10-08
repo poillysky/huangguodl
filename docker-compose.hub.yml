@@ -1,12 +1,9 @@
-# 从 Docker Hub 拉镜像部署（需先由 GitHub Actions 推送成功）
-# 用法：docker compose -f docker-compose.hub.yml --env-file .env up -d
-#
-# 镜像名默认 poillysky；可用环境变量覆盖：
-#   DOCKERHUB_USER=yourname docker compose -f docker-compose.hub.yml up -d
+# 从 Docker Hub 拉单一镜像部署
+# docker compose -f docker-compose.hub.yml --env-file .env up -d
 
 services:
-  api:
-    image: ${DOCKERHUB_USER:-poillysky}/huangguodl-api:${IMAGE_TAG:-latest}
+  app:
+    image: ${DOCKERHUB_USER:-poillysky}/huangguodl:${IMAGE_TAG:-latest}
     environment:
       HG_API: ${HG_API:-https://huangguoai.com}
       OUT_DIR: /data/downloads
@@ -14,21 +11,14 @@ services:
       COVER_PROXY: ${COVER_PROXY:-https://ai.wulii.de5.net}
       COVER_TOKEN: ${COVER_TOKEN:-}
       API_TOKEN: ${API_TOKEN:-}
+      STATIC_DIR: /app/static
       HOST: 0.0.0.0
-      PORT: 8000
+      PORT: 8080
     volumes:
       - downloads:/data/downloads
       - appconfig:/data/config
-    expose:
-      - "8000"
-    restart: unless-stopped
-
-  web:
-    image: ${DOCKERHUB_USER:-poillysky}/huangguodl-web:${IMAGE_TAG:-latest}
     ports:
-      - "${WEB_PORT:-8080}:80"
-    depends_on:
-      - api
+      - "${WEB_PORT:-8080}:8080"
     restart: unless-stopped
 
 volumes:

@@ -1,4 +1,4 @@
-name: Build and push Docker images
+name: Build and push Docker image
 
 on:
   push:
@@ -12,7 +12,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # Secrets 未设 DOCKERHUB_USERNAME 时用 GitHub 用户名（poillysky）
       DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_USERNAME || github.repository_owner }}
     steps:
       - name: Checkout
@@ -30,44 +29,23 @@ jobs:
           username: ${{ env.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta (api)
-        id: meta-api
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKERHUB_USER }}/huangguodl-api
+          images: ${{ env.DOCKERHUB_USER }}/huangguodl
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
             type=ref,event=tag
 
-      - name: Docker meta (web)
-        id: meta-web
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKERHUB_USER }}/huangguodl-web
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,prefix=sha-,format=short
-            type=ref,event=tag
-
-      - name: Build and push api
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: backend/Dockerfile
+          file: Dockerfile
           push: true
-          tags: ${{ steps.meta-api.outputs.tags }}
-          labels: ${{ steps.meta-api.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: frontend/Dockerfile
-          push: true
-          tags: ${{ steps.meta-web.outputs.tags }}
-          labels: ${{ steps.meta-web.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
