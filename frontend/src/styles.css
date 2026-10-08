@@ -121,7 +121,7 @@ input {
   background: linear-gradient(180deg, var(--topbar-bg) 0%, #1b1a20 72px, #121117 100%);
 }
 
-/* 主屏幕：去掉顶区渐变色差，避免和顶栏看成两层 */
+/* 主屏幕：整页顶色与顶栏/状态栏同色，避免刘海区色差像第二层 */
 html.ios.standalone,
 html.ios.standalone body,
 html.ios.standalone #root {
@@ -129,7 +129,18 @@ html.ios.standalone #root {
 }
 
 html.ios.standalone .app-shell:not(.play-shell) {
-  background: #121117;
+  background: linear-gradient(
+    180deg,
+    var(--topbar-bg) 0,
+    var(--topbar-bg) 56px,
+    #121117 120px
+  );
+}
+
+html.ios.standalone .topbar {
+  /* 系统 black 状态栏已占刘海；顶栏不再二次垫高 */
+  padding-top: 0;
+  background: var(--topbar-bg);
 }
 
 .app-shell.play-shell {

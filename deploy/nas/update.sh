@@ -5,4 +5,4 @@ cd "$(dirname "$0")"
 docker compose pull
 docker compose up -d
 docker image prune -f
-echo "OK — poillysky/huangguodl:v1.0.1 @ http://NAS_IP:8080"
+echo "OK — poillysky/huangguodl:v1.0.2 @ http://NAS_IP:8080"

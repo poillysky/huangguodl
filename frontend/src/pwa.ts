@@ -25,12 +25,7 @@ export function applyStandaloneClass(): void {
   if (isStandalone()) root.classList.add("standalone");
   else root.classList.remove("standalone");
   if (isIos()) root.classList.add("ios");
-  // theme-color + black-translucent → 状态栏再刷一层底色，和顶栏垫高叠成「两层」
-  if (isIos()) {
-    document
-      .querySelectorAll('meta[name="theme-color"]')
-      .forEach((el) => el.parentElement?.removeChild(el));
-  }
+  // 状态栏用 black + theme-color=#16151a，与顶栏同色；不再删 theme-color
   syncSafeTop();
   syncAppHeight();
 }
@@ -50,22 +45,19 @@ function probeSafeInset(edge: "top" | "bottom"): number {
   return h;
 }
 
-/** Lock safe-area-top in px so env() flicker (0→real) doesn't flash a second band. */
+/**
+ * 锁定 --safe-top。
+ * iOS 主屏幕 + status-bar-style=black：系统已预留状态栏，必须为 0，
+ * 否则会与系统栏叠出「刘海一层 + 顶栏一层」（见 Red Eye / Progressier）。
+ */
 export function syncSafeTop(): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const root = document.documentElement;
-  let sat = probeSafeInset("top");
-  // Standalone iOS: env 偶发首帧为 0，用短边经验值兜底，下一帧再测
-  if (isStandalone() && isIos() && sat < 1) {
-    const short = Math.min(window.screen.width, window.screen.height);
-    sat = short >= 812 ? 47 : 20;
-    requestAnimationFrame(() => {
-      const again = probeSafeInset("top");
-      if (again >= 1) {
-        root.style.setProperty("--safe-top", `${Math.round(again)}px`);
-      }
-    });
+  if (isStandalone() && isIos()) {
+    root.style.setProperty("--safe-top", "0px");
+    return;
   }
+  const sat = probeSafeInset("top");
   root.style.setProperty("--safe-top", `${Math.round(sat)}px`);
 }
 

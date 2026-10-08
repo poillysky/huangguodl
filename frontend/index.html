@@ -6,14 +6,18 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <!-- Android / 浏览器用；iOS 主屏幕会在下面脚本里去掉，避免与 black-translucent 叠两层 -->
-    <meta name="theme-color" content="#16151a" media="(prefers-color-scheme: dark)" />
+    <!--
+      iOS 主屏幕「顶栏两层」根因（见 Progressier / Red Eye Automation 等）：
+      black-translucent 让页面画进刘海，若再 padding safe-area，或再叠 theme-color，
+      就会看成状态栏一层 + 顶栏一层。改为 black：系统自留状态栏，应用不再垫 --safe-top。
+      注意：status-bar-style 在「添加到主屏幕」时固化，改完需删图标重装。
+    -->
     <meta name="theme-color" content="#16151a" />
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="黄果剧集浏览与下载" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="黄果" />
     <meta name="format-detection" content="telephone=no" />
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -31,8 +35,6 @@
         background: #16151a;
       }
     </style>
-    <!-- 不再引 Google Fonts：国内网络下会阻塞首帧，字体栈已由系统字体兜底
-         （PingFang SC / 微软雅黑 / Noto Sans CJK）。如需统一字形请自托管。 -->
   </head>
   <body style="background:#16151a;margin:0">
     <script>
@@ -51,26 +53,22 @@
           );
         } catch (e) {}
         if (standalone) d.classList.add("standalone");
-        if (ios) {
-          d.classList.add("ios");
-          /* theme-color + black-translucent 会在主屏幕叠出状态栏第二层 */
-          var metas = document.querySelectorAll('meta[name="theme-color"]');
-          for (var i = 0; i < metas.length; i++) {
-            metas[i].parentNode && metas[i].parentNode.removeChild(metas[i]);
-          }
-        }
-        /* 首屏锁定刘海高度，避免 env 闪 0 露底，也避免与 constant 双写 */
+        if (ios) d.classList.add("ios");
+        /*
+         * black 状态栏：系统已占刘海区，内容从状态栏下开始。
+         * 切勿再写入 env(safe-area-inset-top)，否则会再垫一层空白。
+         * Safari 标签页仍探测 inset（横屏等）。
+         */
         try {
-          var probe = document.createElement("div");
-          probe.style.cssText =
-            "position:fixed;left:0;top:0;width:0;visibility:hidden;pointer-events:none;" +
-            "height:constant(safe-area-inset-top);height:env(safe-area-inset-top,0px);";
-          d.appendChild(probe);
-          var sat = probe.getBoundingClientRect().height || 0;
-          probe.parentNode && probe.parentNode.removeChild(probe);
-          if (standalone && ios && sat < 1) {
-            var short = Math.min(screen.width, screen.height);
-            sat = short >= 812 ? 47 : 20;
+          var sat = 0;
+          if (!(ios && standalone)) {
+            var probe = document.createElement("div");
+            probe.style.cssText =
+              "position:fixed;left:0;top:0;width:0;visibility:hidden;pointer-events:none;" +
+              "height:constant(safe-area-inset-top);height:env(safe-area-inset-top,0px);";
+            d.appendChild(probe);
+            sat = probe.getBoundingClientRect().height || 0;
+            probe.parentNode && probe.parentNode.removeChild(probe);
           }
           d.style.setProperty("--safe-top", Math.round(sat) + "px");
         } catch (e2) {}

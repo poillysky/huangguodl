@@ -11,6 +11,7 @@
   "display_override": ["standalone", "fullscreen", "minimal-ui"],
   "orientation": "any",
   "background_color": "#16151a",
+  "theme_color": "#16151a",
   "categories": ["entertainment", "video"],
   "icons": [
     {
