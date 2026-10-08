@@ -1,0 +1,2 @@
+# CLI / 本地开发：与 backend 共用依赖（含 imageio-ffmpeg，NAS 勿本机装 ffmpeg）
+-r backend/requirements.txt

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <!-- Android / 浏览器用；iOS 主屏幕会在下面脚本里去掉，避免与 black-translucent 叠两层 -->
+    <meta name="theme-color" content="#16151a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#16151a" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="黄果剧集浏览与下载" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="黄果" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <title>黄果</title>
+    <style>
+      :root {
+        --safe-top: 0px;
+        --topbar-bg: #16151a;
+      }
+      html,
+      body {
+        background: #16151a;
+      }
+    </style>
+    <!-- 不再引 Google Fonts：国内网络下会阻塞首帧，字体栈已由系统字体兜底
+         （PingFang SC / 微软雅黑 / Noto Sans CJK）。如需统一字形请自托管。 -->
+  </head>
+  <body style="background:#16151a;margin:0">
+    <script>
+      (function () {
+        var d = document.documentElement;
+        var ua = navigator.userAgent || "";
+        var ios =
+          /iPad|iPhone|iPod/.test(ua) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        var standalone = false;
+        try {
+          standalone = !!(
+            navigator.standalone ||
+            (window.matchMedia &&
+              window.matchMedia("(display-mode: standalone)").matches)
+          );
+        } catch (e) {}
+        if (standalone) d.classList.add("standalone");
+        if (ios) {
+          d.classList.add("ios");
+          /* theme-color + black-translucent 会在主屏幕叠出状态栏第二层 */
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          for (var i = 0; i < metas.length; i++) {
+            metas[i].parentNode && metas[i].parentNode.removeChild(metas[i]);
+          }
+        }
+        /* 首屏锁定刘海高度，避免 env 闪 0 露底，也避免与 constant 双写 */
+        try {
+          var probe = document.createElement("div");
+          probe.style.cssText =
+            "position:fixed;left:0;top:0;width:0;visibility:hidden;pointer-events:none;" +
+            "height:constant(safe-area-inset-top);height:env(safe-area-inset-top,0px);";
+          d.appendChild(probe);
+          var sat = probe.getBoundingClientRect().height || 0;
+          probe.parentNode && probe.parentNode.removeChild(probe);
+          if (standalone && ios && sat < 1) {
+            var short = Math.min(screen.width, screen.height);
+            sat = short >= 812 ? 47 : 20;
+          }
+          d.style.setProperty("--safe-top", Math.round(sat) + "px");
+        } catch (e2) {}
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

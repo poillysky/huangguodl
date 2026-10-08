@@ -1,0 +1,15 @@
+**/__pycache__
+**/*.pyc
+.git
+.hg_cache.json
+downloads
+frontend/node_modules
+frontend/dist
+**/.env
+*.mp4
+*.part
+*.jpg
+legacy
+tests
+*.md
+!backend/requirements.txt

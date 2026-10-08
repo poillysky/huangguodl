@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      HG_API: ${HG_API:-https://huangguoai.com}
+      OUT_DIR: /data/downloads
+      DATA_DIR: /data/config
+      COVER_PROXY: ${COVER_PROXY:-https://ai.wulii.de5.net}
+      COVER_TOKEN: ${COVER_TOKEN:-}
+      API_TOKEN: ${API_TOKEN:-}
+      HOST: 0.0.0.0
+      PORT: 8000
+    volumes:
+      - downloads:/data/downloads
+      - appconfig:/data/config
+    # API not published publicly — only reachable via web nginx
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  downloads:
+  appconfig:

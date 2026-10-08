@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>hg-dl 剧集下载器</title>
+<style>
+:root{
+  --bg:#f6f6f4; --card:#fff; --ink:#1c1c1e; --muted:#6b6b70; --faint:#9a9aa0;
+  --line:rgba(0,0,0,.09); --line2:rgba(0,0,0,.16);
+  --acc:#0a6cff; --acc-soft:rgba(10,108,255,.1);
+  --ok:#0f8a4d; --warn:#b5730a; --err:#c8341f;
+  --r:12px; --r-lg:16px;
+  --shadow:0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.06);
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font:400 14px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button,input{font:inherit; color:inherit}
+button{cursor:pointer; border:0; background:none}
+a{color:var(--acc); text-decoration:none}
+
+/* 顶栏 */
+header{
+  position:sticky; top:0; z-index:50;
+  background:rgba(246,246,244,.86); backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--line);
+}
+.bar{display:flex; align-items:center; gap:12px; padding:10px 20px; max-width:1280px; margin:0 auto}
+.logo{font-size:15px; font-weight:600; letter-spacing:-.01em; white-space:nowrap}
+.logo span{color:var(--faint); font-weight:400; margin-left:6px; font-size:12px}
+.search{flex:1; max-width:420px; position:relative}
+.search input{
+  width:100%; padding:8px 34px 8px 32px; border-radius:10px;
+  border:1px solid var(--line2); background:var(--card); outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.search input:focus{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-soft)}
+.search .ico{position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--faint); font-size:13px}
+.search .clr{position:absolute; right:6px; top:50%; transform:translateY(-50%); color:var(--faint); padding:4px 6px; font-size:14px}
+.search .clr:hover{color:var(--ink)}
+.bar .sp{flex:1}
+
+/* 分类条 */
+.cats{display:flex; gap:6px; overflow-x:auto; padding:0 20px 10px; max-width:1280px; margin:0 auto;
+     scrollbar-width:none}
+.cats::-webkit-scrollbar{display:none}
+.cats button{
+  padding:5px 12px; border-radius:999px; font-size:13px; white-space:nowrap;
+  background:var(--card); border:1px solid var(--line); color:var(--muted);
+  transition:.14s;
+}
+.cats button:hover{border-color:var(--line2); color:var(--ink)}
+.cats button[aria-selected=true]{background:var(--ink); color:#fff; border-color:var(--ink)}
+
+main{max-width:1280px; margin:0 auto; padding:16px 20px 80px}
+.sect{display:flex; align-items:baseline; justify-content:space-between; margin:0 0 12px}
+.sect h2{margin:0; font-size:14px; font-weight:600}
+.sect .meta{font-size:12px; color:var(--faint)}
+
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:16px}
+@media(max-width:520px){.grid{grid-template-columns:repeat(3,1fr); gap:10px}}
+.card{background:var(--card); border-radius:var(--r); overflow:hidden; cursor:pointer;
+      box-shadow:var(--shadow); transition:transform .16s cubic-bezier(.2,.8,.3,1), box-shadow .16s;
+      border:1px solid var(--line); animation:fade .25s ease both}
+.card:hover{transform:translateY(-2px); box-shadow:0 2px 4px rgba(0,0,0,.06),0 12px 32px rgba(0,0,0,.1)}
+.card:active{transform:scale(.98)}
+@keyframes fade{from{opacity:0; transform:translateY(6px)}to{opacity:1}}
+.poster{aspect-ratio:3/4; background:linear-gradient(160deg,#ececec,#dcdcdf); position:relative; overflow:hidden}
+.poster img{width:100%; height:100%; object-fit:cover; display:block}
+.poster .ph{position:absolute; inset:0; display:grid; place-items:center; color:var(--faint); font-size:11px}
+.poster .badge{
+  position:absolute; left:6px; top:6px; padding:2px 7px; border-radius:6px;
+  font-size:11px; font-weight:500; background:rgba(0,0,0,.62); color:#fff; backdrop-filter:blur(8px);
+}
+.card .info{padding:8px 10px 10px}
+.card .t{font-size:13px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+         overflow:hidden; min-height:2.7em}
+.card .n{font-size:11px; color:var(--faint); margin-top:3px}
+
+/* 抽屉 */
+.veil{position:fixed; inset:0; background:rgba(0,0,0,.34); opacity:0; pointer-events:none;
+      transition:opacity .22s; z-index:90; backdrop-filter:blur(2px)}
+.veil.on{opacity:1; pointer-events:auto}
+.drawer{
+  position:fixed; z-index:100; left:50%; bottom:0; transform:translate(-50%,100%);
+  width:min(680px,100%); max-height:88vh; background:var(--bg);
+  border-radius:20px 20px 0 0; box-shadow:0 -8px 40px rgba(0,0,0,.2);
+  transition:transform .3s cubic-bezier(.2,.9,.25,1); display:flex; flex-direction:column;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.drawer.on{transform:translate(-50%,0)}
+@media(min-width:760px){
+  .drawer{left:auto; right:20px; bottom:20px; top:20px; width:420px; max-height:none;
+          border-radius:18px; transform:translateX(calc(100% + 24px))}
+  .drawer.on{transform:translateX(0)}
+}
+.dhead{display:flex; gap:12px; padding:16px; border-bottom:1px solid var(--line); align-items:flex-start}
+.dhead .ph{width:64px; aspect-ratio:3/4; border-radius:8px; background:#e3e3e6; flex:none; overflow:hidden}
+.dhead .ph img{width:100%; height:100%; object-fit:cover}
+.dhead .info{flex:1; min-width:0}
+.dhead h3{margin:0 0 4px; font-size:15px; font-weight:600; line-height:1.35}
+.dhead .sub{font-size:12px; color:var(--muted)}
+.dbody{flex:1; overflow-y:auto; padding:14px 16px}
+.dfoot{padding:12px 16px; border-top:1px solid var(--line); background:var(--card); border-radius:0 0 20px 20px}
+@media(min-width:760px){.dfoot{border-radius:0 0 18px 18px}}
+.x{margin-left:auto; color:var(--faint); font-size:18px; padding:4px 8px; line-height:1}
+.x:hover{color:var(--ink)}
+
+.row{display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap}
+.row label{font-size:13px; color:var(--muted)}
+input[type=number],input[type=text],select{
+  padding:6px 9px; border-radius:8px; border:1px solid var(--line2); background:var(--card);
+  outline:none; min-width:0}
+input:focus,select:focus{border-color:var(--acc); box-shadow:0 0 0 3px var(--acc-soft)}
+input[type=number]{width:78px}
+
+.chip{padding:4px 10px; border-radius:999px; font-size:12px; background:var(--acc-soft);
+      color:var(--acc); border:1px solid transparent}
+.chip.ok{background:rgba(15,138,77,.1); color:var(--ok)}
+.chip.warn{background:rgba(181,115,10,.1); color:var(--warn)}
+.chip.err{background:rgba(200,52,31,.1); color:var(--err)}
+
+.eps{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0}
+.eps button{
+  min-width:40px; padding:6px 8px; border-radius:8px; font-size:13px;
+  background:var(--card); border:1px solid var(--line); transition:.12s;
+}
+.eps button:hover{border-color:var(--acc)}
+.eps button[aria-pressed=true]{background:var(--acc); color:#fff; border-color:var(--acc)}
+.eps button.here{box-shadow:inset 0 0 0 1px var(--ok)}
+
+.btn{padding:9px 16px; border-radius:10px; font-size:14px; font-weight:500;
+     background:var(--acc); color:#fff; transition:.14s; white-space:nowrap}
+.btn:hover{filter:brightness(1.06)}
+.btn:active{transform:scale(.985)}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.btn.ghost{background:var(--card); color:var(--ink); border:1px solid var(--line2)}
+.btn.ghost:hover{background:#f0f0ee}
+
+.tasks{margin-top:22px}
+.task{background:var(--card); border:1px solid var(--line); border-radius:var(--r);
+      padding:12px 14px; margin-bottom:8px; box-shadow:var(--shadow)}
+.task .t1{display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500}
+.task .t1 .sp{flex:1}
+.task .t2{font-size:12px; color:var(--muted); margin-top:4px}
+.bar2{height:4px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:8px}
+.bar2 i{display:block; height:100%; background:var(--acc); transition:width .3s}
+
+.empty{padding:60px 20px; text-align:center; color:var(--faint); font-size:13px}
+.err-box{background:rgba(200,52,31,.07); border:1px solid rgba(200,52,31,.2); color:var(--err);
+         padding:10px 12px; border-radius:10px; font-size:13px; margin-bottom:14px}
+.hide{display:none !important}
+.sk{background:linear-gradient(90deg,#eee,#f6f6f4,#eee); background-size:200% 100%;
+    animation:sk 1.2s infinite; border-radius:8px}
+@keyframes sk{to{background-position:-200% 0}}
+.pill{position:fixed; left:50%; bottom:22px; transform:translateX(-50%) translateY(80px);
+      background:var(--ink); color:#fff; padding:9px 16px; border-radius:999px; font-size:13px;
+      z-index:200; transition:transform .25s; box-shadow:0 6px 24px rgba(0,0,0,.2); max-width:90vw}
+.pill.on{transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="logo">hg-dl<span>剧集下载器</span></div>
+    <div class="search">
+      <span class="ico">⌕</span>
+      <input id="q" placeholder="搜索剧名，回车确认" autocomplete="off">
+      <button class="clr hide" id="qclr" title="清空">✕</button>
+    </div>
+    <div class="sp"></div>
+    <span class="meta" id="outdir" style="font-size:12px;color:var(--faint)"></span>
+  </div>
+  <div class="cats" id="cats"></div>
+</header>
+
+<main>
+  <div id="err" class="err-box hide"></div>
+
+  <div class="sect">
+    <h2 id="ttl">热门</h2>
+    <div class="meta" id="cnt"></div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div class="empty hide" id="empty">没有内容</div>
+
+  <div class="sect" style="margin-top:26px"><h2>下载任务</h2></div>
+  <div class="tasks" id="tasks"></div>
+</main>
+
+<div class="veil" id="veil"></div>
+<aside class="drawer" id="drawer">
+  <div class="dhead">
+    <div class="ph" id="dph"></div>
+    <div class="info">
+      <h3 id="dttl">—</h3>
+      <div class="sub" id="dsub">加载中…</div>
+    </div>
+    <button class="x" id="dx">✕</button>
+  </div>
+  <div class="dbody">
+    <div class="row">
+      <label>输出到</label>
+      <input type="text" id="dout" style="flex:1">
+    </div>
+    <div class="row">
+      <label>对照本地目录</label>
+      <input type="text" id="dscan" placeholder="留空则只看输出目录已有文件">
+      <label style="display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="dmiss" checked style="width:auto">只下缺失
+      </label>
+    </div>
+    <div class="row">
+      <label>并发</label><input type="number" id="dwork" value="3" min="1" max="8">
+      <label>封面</label>
+      <label style="display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="dcov" checked style="width:auto">下载封面
+      </label>
+    </div>
+    <div class="row">
+      <button class="chip" id="dall">全选</button>
+      <button class="chip" id="dnone">清空</button>
+      <button class="chip" id="dmiss2">选缺失</button>
+      <span class="chip" id="dsel">已选 0 集</span>
+    </div>
+    <div class="eps" id="deps"></div>
+    <div id="dnote"></div>
+  </div>
+  <div class="dfoot">
+    <button class="btn" id="dgo" style="width:100%">开始下载</button>
+  </div>
+</aside>
+
+<div class="pill" id="pill"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pill = (m, ms=2200) => { const p=$('#pill'); p.textContent=m; p.classList.add('on');
+  clearTimeout(p._t); p._t=setTimeout(()=>p.classList.remove('on'), ms); };
+const showErr = m => { const e=$('#err'); if(!m){e.classList.add('hide');return;}
+  e.textContent=m; e.classList.remove('hide'); };
+
+const S = { cfg:null, cats:[], cat:'hot', page:1, kw:'', shows:[], cur:null,
+            eps:[], sel:new Set(), here:new Set(), tasks:[], timer:null };
+
+async function j(u, opt){
+  const r = await fetch(u, opt);
+  let d; try { d = await r.json(); }
+  catch { throw new Error(`HTTP ${r.status} 返回的不是JSON`); }
+  if(!r.ok || d.ok === false) throw new Error(d.error || `HTTP ${r.status}`);
+  return d;
+}
+const post = (u,b) => j(u, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(b)});
+
+/* ---- 封面：走后端代理，token 不暴露给浏览器 ---- */
+function coverImg(raw){
+  const im = document.createElement('img');
+  im.loading = 'lazy'; im.alt='';
+  if(raw) im.src = '/api/cover?url=' + encodeURIComponent(raw);
+  im.onerror = () => { im.replaceWith(Object.assign(document.createElement('div'),
+      {className:'ph', textContent:'无封面'})); };
+  return im;
+}
+
+/* ---- 目录 ---- */
+async function loadCats(){
+  S.cats = S.cfg.categories;
+  $('#cats').innerHTML = S.cats.map(c =>
+    `<button data-v="${esc(c.value)}" title="${esc(c.value)}">${esc(c.title)}</button>`).join('');
+  $('#cats').onclick = e => {
+    const b = e.target.closest('button'); if(!b) return;
+    S.cat = b.dataset.v; S.kw=''; $('#q').value=''; $('#qclr').classList.add('hide');
+    S.page = 1; markCat(); load();
+  };
+  $('#outdir').textContent = '→ ' + S.cfg.out;
+  markCat();
+}
+function markCat(){
+  document.querySelectorAll('#cats button').forEach(b =>
+    b.setAttribute('aria-selected', b.dataset.v === S.cat && !S.kw));
+}
+
+function card(s){
+  const d = document.createElement('div'); d.className='card'; d.dataset.id=s.id;
+  d.innerHTML = `<div class="poster"></div>
+    <div class="info"><div class="t">${esc(s.title)}</div>
+    <div class="n">${s.total ? s.total+' 集' : '集数未知'} ${s.finished?'· 全':'· 更新中'}</div></div>`;
+  const p = d.querySelector('.poster');
+  if(s.cover) p.appendChild(coverImg(s.cover));
+  else p.innerHTML = '<div class="ph">无封面</div>';
+  if(s.finished) p.insertAdjacentHTML('beforeend','<span class="badge">全'+s.total+'集</span>');
+  d.onclick = () => openDrawer(s);
+  return d;
+}
+
+function render(){
+  const g = $('#grid');
+  g.innerHTML = ''; $('#empty').classList.toggle('hide', S.shows.length>0);
+  S.shows.forEach((s,i)=>{
+    const c = card(s); c.style.animationDelay = Math.min(i*14, 260)+'ms';
+    g.appendChild(c);
+  });
+  $('#ttl').textContent = S.kw ? `搜索「${S.kw}」` : (S.cats.find(c=>c.value===S.cat)?.title || S.cat);
+  $('#cnt').textContent = S.shows.length ? `${S.shows.length} 部` : '';
+}
+
+async function load(){
+  showErr('');
+  const g = $('#grid'); g.innerHTML='';
+  for(let i=0;i<12;i++){ const sk=document.createElement('div');
+    sk.className='card'; sk.innerHTML='<div class="sk" style="aspect-ratio:3/4"></div>'
+      +'<div class="info"><div class="sk" style="height:11px;margin-bottom:6px"></div>'
+      +'<div class="sk" style="height:9px;width:60%"></div></div>'; g.appendChild(sk); }
+  try{
+    const d = S.kw ? await j('/api/search?q='+encodeURIComponent(S.kw)+'&page='+S.page)
+                   : await j('/api/catalog?category='+encodeURIComponent(S.cat)+'&page='+S.page);
+    S.shows = d.items || [];
+    render();
+    if(!S.shows.length) $('#empty').textContent = S.kw ? '没搜到，换个关键词试试' : '这个分类暂时是空的';
+  }catch(e){ g.innerHTML=''; $('#empty').classList.add('hide'); showErr(e.message); }
+}
+
+/* ---- 抽屉：看集数、选集 ---- */
+async function openDrawer(s){
+  S.cur = s; S.eps=[]; S.sel=new Set();
+  $('#dttl').textContent = s.title;
+  $('#dsub').textContent = '加载中…';
+  const dph=$('#dph'); dph.innerHTML=''; if(s.cover) dph.appendChild(coverImg(s.cover));
+  $('#dout').value = S.cfg.out;
+  $('#dscan').value = S.cfg.scanDir || '';
+  $('#deps').innerHTML = '';
+  $('#dnote').innerHTML = '';
+  $('#dgo').textContent = '开始下载';
+  open();
+  try{
+    const d = await j('/api/episodes?id='+encodeURIComponent(s.id));
+    S.eps = d.episodes || [];
+    $('#dsub').textContent = `共 ${S.eps.length} 集`;
+    if(!S.eps.length){ $('#deps').innerHTML='<div class="empty">拿不到集数信息</div>'; return; }
+    renderEps();
+    refreshLocal();
+  }catch(e){ $('#dsub').textContent = '加载失败'; $('#deps').innerHTML =
+    `<div class="err-box">${esc(e.message)}</div>`; }
+}
+
+function renderEps(){
+  $('#deps').innerHTML = S.eps.map(e =>
+    `<button data-n="${e.n}" aria-pressed="false">${e.n}</button>`).join('');
+  $('#deps').onclick = ev => {
+    const b = ev.target.closest('button'); if(!b) return;
+    const n = +b.dataset.n;
+    S.sel.has(n) ? S.sel.delete(n) : S.sel.add(n);
+    b.setAttribute('aria-pressed', S.sel.has(n));
+    updSel();
+  };
+  updSel();
+}
+function updSel(){
+  $('#dsel').textContent = `已选 ${S.sel.size} 集`;
+  $('#dgo').textContent = S.sel.size ? `下载选中的 ${S.sel.size} 集` : '先选集';
+  $('#dgo').disabled = S.sel.size === 0;
+}
+
+/* 对照本地：把已有的集标绿 */
+async function refreshLocal(){
+  const dir = $('#dscan').value.trim() || S.cfg.out;
+  try{
+    const d = await j('/api/local?dir='+encodeURIComponent(dir));
+    S.here = new Set();
+    const key = S.cur ? (S.cur.title||'').trim() : '';
+    const hit = (d.shows||[]).find(s =>
+      s.title.replace(/[^\w\u4e00-\u9fa5]/g,'') === key.replace(/[^\w\u4e00-\u9fa5]/g,''));
+    if(hit) (hit.eps||[]).forEach(n => S.here.add(n));
+    document.querySelectorAll('#deps button').forEach(b => {
+      b.classList.toggle('here', S.here.has(+b.dataset.n));
+    });
+  }catch{ /* 对照失败不阻塞 */ }
+}
+
+/* ---- 下载 ---- */
+async function startDownload(){
+  if(!S.sel.size) return;
+  const btn = $('#dgo'); btn.disabled=true; btn.textContent='提交中…';
+  try{
+    const scan = $('#dscan').value.trim();
+    let eps = [...S.sel];
+    if(scan && $('#dmiss').checked) eps = eps.filter(n => !S.here.has(n));
+    if(!eps.length){ pill('选中的集本地都有了，无需下载'); btn.disabled=false; updSel(); return; }
+    const d = await post('/api/download', {
+      title: S.cur.title, episodes: eps, out: $('#dout').value.trim(),
+      scan_dir: scan, workers: +$('#dwork').value||3, cover: $('#dcov').checked,
+    });
+    S.tasks.unshift(d.task); paintTasks();
+    pill(`已开始：${d.task.title} · ${eps.length} 集`);
+    close(); poll();
+  }catch(e){
+    showErr(e.message);
+    if(e.candidates && e.candidates.length){
+      $('#dnote').innerHTML = '<div class="sub" style="margin-bottom:6px">你是不是想找：</div>' +
+        e.candidates.map(c=>`<button class="chip" data-cand="${esc(c.id)}">${esc(c.title)}</button>`).join('');
+    }
+    pill('提交失败'); btn.disabled=false; updSel();
+  }
+}
+
+function paintTasks(){
+  const box = $('#tasks');
+  if(!S.tasks.length){ box.innerHTML = '<div class="empty" style="padding:20px">还没有任务</div>'; return; }
+  box.innerHTML = S.tasks.map(t => {
+    const total = (t.plan||[]).length || 1;
+    const fin = (t.done||0) + (t.fail||0);
+    const pct = Math.round(fin/total*100);
+    const st = t.status==='running' ? '进行中' : t.status==='done' ? '完成' :
+               t.status==='error' ? '出错' : '等待';
+    return `<div class="task" data-t="${esc(t.id)}">
+      <div class="t1">${esc(t.title)}
+        <span class="sp"></span>
+        <span class="chip ${t.status==='done'?'ok':t.status==='error'?'err':''}">${st}</span></div>
+      <div class="t2">${fin}/${total} 集${t.fail?` · 失败 ${t.fail}`:''}${
+        t.coverNote?` · 封面: ${esc(t.coverNote)}`:''}</div>
+      <div class="bar2"><i style="width:${pct}%"></i></div>
+    </div>`;
+  }).join('');
+}
+
+async function poll(){
+  clearInterval(S.timer);
+  try{
+    const d = await j('/api/tasks');
+    const running = d.tasks.some(t => t.status === 'running');
+    S.tasks = d.tasks; paintTasks();
+    if(running) S.timer = setTimeout(poll, 900);
+  }catch{ /* 轮询失败静默 */ }
+}
+
+/* ---- 抽屉开合 / 事件 ---- */
+function open(){ $('#drawer').classList.add('on'); $('#veil').classList.add('on'); }
+function close(){ $('#drawer').classList.remove('on'); $('#veil').classList.remove('on'); }
+
+$('#dx').onclick = close;
+$('#veil').onclick = close;
+document.addEventListener('keydown', e => { if(e.key==='Escape') close(); });
+
+$('#dall').onclick  = () => { S.eps.forEach(x=>S.sel.add(x.n)); renderEps(); };
+$('#dnone').onclick = () => { S.sel.clear(); renderEps(); };
+$('#dmiss2').onclick= () => { S.sel = new Set(S.eps.filter(x=>!S.here.has(x.n)).map(x=>x.n)); renderEps(); };
+$('#dgo').onclick = startDownload;
+$('#dscan').onchange = refreshLocal;
+$('#dnote').onclick = e => {
+  const b = e.target.closest('[data-cand]'); if(!b) return;
+  const t = S.shows.find(x=>x.id===b.dataset.cand);
+  if(t) openDrawer(t);
+};
+
+$('#q').oninput = e => { $('#qclr').classList.toggle('hide', !e.target.value); };
+$('#qclr').onclick = () => { $('#q').value=''; $('#qclr').classList.add('hide');
+  S.kw=''; S.page=1; markCat(); load(); };
+$('#q').onkeydown = e => {
+  if(e.key!=='Enter') return;
+  const v = e.target.value.trim();
+  if(!v){ if(S.kw){ S.kw=''; S.page=1; markCat(); load(); } return; }
+  S.kw = v; S.page = 1; markCat(); load();
+};
+
+(async function init(){
+  try{
+    S.cfg = await j('/api/config');
+    await loadCats();
+    await load();
+    paintTasks(); poll();
+  }catch(e){ showErr('初始化失败: ' + e.message); }
+})();
+</script>
+</body>
+</html>

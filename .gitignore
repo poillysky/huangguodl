@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.hg_cache.json
+.hg_settings.json
+downloads/*
+!downloads/.gitkeep
+data/*.json
+data/*.tmp
+frontend/dist/
+frontend/node_modules/
