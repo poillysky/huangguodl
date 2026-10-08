@@ -1,8 +1,9 @@
-# 单一镜像：前端静态资源 + FastAPI + 系统 ffmpeg（NAS 比 imageio 自带二进制稳）
-FROM node:20-alpine AS frontend
+# 单一镜像：前端 + FastAPI + 系统 ffmpeg
+# 前端阶段固定在构建机原生架构，避免为 arm64 目标在慢速模拟里跑 npm
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
+RUN npm ci --prefer-offline --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 

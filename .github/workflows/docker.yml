@@ -6,30 +6,90 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+env:
+  IMAGE_NAME: huangguodl
+
 jobs:
-  build-push:
-    runs-on: ubuntu-latest
+  # amd64 / arm64 在原生 runner 并行构建，比单机 QEMU 交叉编译快很多
+  build:
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     env:
       DH_USER: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner }}
-      # 本仓库 Secret 名为 DOCKERHUB
       DH_PASS: ${{ secrets.DOCKERHUB || secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify Docker Hub secrets
+      - name: Verify secrets
         run: |
           if [ -z "$DH_PASS" ]; then
-            echo "::error::Docker Hub 密码 Secret 为空。本仓库应配置名为 DOCKERHUB 的 Repository secret。"
+            echo "::error::缺少 Docker Hub Secret（DOCKERHUB）"
             exit 1
           fi
-          echo "Docker Hub user=$DH_USER"
-          echo "Password secret: present"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Platform id
+        id: prep
+        run: |
+          plat="${{ matrix.platform }}"
+          echo "platform_pair=${plat//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DH_USER }}
+          password: ${{ env.DH_PASS }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.DH_USER }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.platform }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.prep.outputs.platform_pair }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner }}
+      DH_PASS: ${{ secrets.DOCKERHUB || secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -44,21 +104,18 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DH_USER }}/huangguodl
+          images: ${{ env.DH_USER }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=short
             type=ref,event=tag
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          # NAS 常见 amd64 / arm64，避免拉错架构导致 ffmpeg 段错误
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.DH_USER }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect ${{ env.DH_USER }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
