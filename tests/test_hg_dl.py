@@ -343,6 +343,12 @@ class TestCover(unittest.TestCase):
         ok, note = hg_dl.save_cover(self.show, self.a, self.out, "", "")
         self.assertTrue(ok)
         self.assertIn("已存在", note)
+        # 已有剧海报时也要补齐季封面（飞牛 season01-poster.jpg）
+        root = hg_dl.show_dir(self.show, self.out)
+        self.assertTrue(os.path.isfile(os.path.join(root, "season01-poster.jpg")))
+        self.assertTrue(
+            os.path.isfile(os.path.join(root, "Season 01", "poster.jpg"))
+        )
 
     def test_missing_cover_is_graceful(self):
         s = hg_dl.Show(id="9999", title="没封面的剧", cover="")
@@ -377,9 +383,11 @@ class TestCover(unittest.TestCase):
         self.assertTrue(ok, note)
         root = hg_dl.show_dir(self.show, self.out)
         self.assertTrue(os.path.isfile(os.path.join(root, "poster.jpg")))
+        self.assertTrue(os.path.isfile(os.path.join(root, "season01-poster.jpg")))
         self.assertTrue(os.path.isfile(os.path.join(root, "tvshow.nfo")))
         season = os.path.join(root, "Season 01")
         self.assertTrue(os.path.isfile(os.path.join(season, "poster.jpg")))
+        self.assertTrue(os.path.isfile(os.path.join(season, "folder.jpg")))
         self.assertTrue(os.path.isfile(os.path.join(season, "season.nfo")))
         with open(os.path.join(root, "tvshow.nfo"), encoding="utf-8") as fh:
             nfo = fh.read()

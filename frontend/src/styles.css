@@ -121,7 +121,7 @@ input {
   background: linear-gradient(180deg, var(--topbar-bg) 0%, #1b1a20 72px, #121117 100%);
 }
 
-/* 主屏幕：整页顶色与顶栏/状态栏同色，避免刘海区色差像第二层 */
+/* 主屏幕：整页顶色与顶栏同色，刘海区由 .topbar 的 padding 连成一条 */
 html.ios.standalone,
 html.ios.standalone body,
 html.ios.standalone #root {
@@ -132,15 +132,9 @@ html.ios.standalone .app-shell:not(.play-shell) {
   background: linear-gradient(
     180deg,
     var(--topbar-bg) 0,
-    var(--topbar-bg) 56px,
-    #121117 120px
+    var(--topbar-bg) calc(var(--safe-top, 0px) + 56px),
+    #121117 calc(var(--safe-top, 0px) + 120px)
   );
-}
-
-html.ios.standalone .topbar {
-  /* 系统 black 状态栏已占刘海；顶栏不再二次垫高 */
-  padding-top: 0;
-  background: var(--topbar-bg);
 }
 
 .app-shell.play-shell {
@@ -189,8 +183,8 @@ html.playing .app-shell.play-shell.has-cover::before {
 }
 
 /*
- * 顶栏 = 刘海安全区 + 标题行，同一块实色。
- * 只用锁定后的 --safe-top，禁止再写 constant/env，避免主屏幕双倍垫高。
+ * 顶栏 = 刘海安全区 + 标题行，同一块实色（black-translucent）。
+ * 只用 JS 锁定的 --safe-top，禁止再写 env(safe-area-inset-top)。
  */
 .topbar {
   flex: 0 0 auto;
@@ -200,7 +194,6 @@ html.playing .app-shell.play-shell.has-cover::before {
   padding-top: var(--safe-top, 0px);
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--line);
-  /* 整块连成一条，状态栏区不另起材质 */
   box-shadow: none;
 }
 

@@ -25,7 +25,6 @@ export function applyStandaloneClass(): void {
   if (isStandalone()) root.classList.add("standalone");
   else root.classList.remove("standalone");
   if (isIos()) root.classList.add("ios");
-  // 状态栏用 black + theme-color=#16151a，与顶栏同色；不再删 theme-color
   syncSafeTop();
   syncAppHeight();
 }
@@ -46,17 +45,14 @@ function probeSafeInset(edge: "top" | "bottom"): number {
 }
 
 /**
- * 锁定 --safe-top。
- * iOS 主屏幕 + status-bar-style=black：系统已预留状态栏，必须为 0，
- * 否则会与系统栏叠出「刘海一层 + 顶栏一层」（见 Red Eye / Progressier）。
+ * 锁定 --safe-top（实测 px）。
+ * iOS 主屏幕配合 black-translucent：页面画进刘海，顶栏用此值垫高一次，
+ * 状态栏图标叠在顶栏色带上，视觉上只有一条顶栏。
+ * 切勿再在 CSS 里叠 env(safe-area-inset-top)。
  */
 export function syncSafeTop(): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const root = document.documentElement;
-  if (isStandalone() && isIos()) {
-    root.style.setProperty("--safe-top", "0px");
-    return;
-  }
   const sat = probeSafeInset("top");
   root.style.setProperty("--safe-top", `${Math.round(sat)}px`);
 }

@@ -1113,7 +1113,35 @@ def cover_path(show: Show, out_dir: str) -> str:
 
 
 def season_poster_path(show: Show, out_dir: str) -> str:
+    """季文件夹内海报：Season 01/poster.jpg（Emby / Jellyfin）。"""
     return os.path.join(season_dir(show, out_dir), "poster.jpg")
+
+
+def season01_poster_path(show: Show, out_dir: str) -> str:
+    """剧根目录季海报：season01-poster.jpg（飞牛影视 / Jellyfin 兼容命名）。"""
+    return os.path.join(show_dir(show, out_dir), "season01-poster.jpg")
+
+
+def _sync_season_posters(show: Show, out_dir: str) -> None:
+    """把剧海报同步到季封面的几种兼容路径。"""
+    poster = cover_path(show, out_dir)
+    if not (os.path.isfile(poster) and os.path.getsize(poster) > 0):
+        return
+    os.makedirs(season_dir(show, out_dir), exist_ok=True)
+    targets = (
+        season_poster_path(show, out_dir),
+        os.path.join(season_dir(show, out_dir), "folder.jpg"),
+        season01_poster_path(show, out_dir),
+    )
+    for dest in targets:
+        try:
+            if os.path.isfile(dest) and os.path.getsize(dest) == os.path.getsize(poster):
+                # 同大小则再比 mtime，避免无意义覆盖
+                if os.path.getmtime(dest) >= os.path.getmtime(poster):
+                    continue
+            shutil.copy2(poster, dest)
+        except OSError:
+            pass
 
 
 def tvshow_nfo_path(show: Show, out_dir: str) -> str:
@@ -1262,11 +1290,7 @@ def ensure_emby_metadata(
             pass
     write_tvshow_nfo(show, out_dir, plot=plot, genres=genres)
     write_season_nfo(show, out_dir)
-    if os.path.isfile(poster):
-        try:
-            shutil.copy2(poster, season_poster_path(show, out_dir))
-        except OSError:
-            pass
+    _sync_season_posters(show, out_dir)
 
 
 def build_cover_url(raw: str, api_base: str, proxy: str, token: str) -> str:
@@ -1310,10 +1334,7 @@ def save_cover(show: Show, api: HGApi, out_dir: str, cover_proxy: str = "",
         if alt and alt != url:
             ok, note = api.fetch_cover(alt, dest, timeout=timeout)
     if ok:
-        try:
-            shutil.copy2(dest, season_poster_path(show, out_dir))
-        except OSError:
-            pass
+        _sync_season_posters(show, out_dir)
         ensure_emby_metadata(show, out_dir, plot=plot)
     return ok, note
 

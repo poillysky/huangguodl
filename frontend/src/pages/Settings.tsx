@@ -94,7 +94,12 @@ export default function SettingsPage() {
       <div className="panel">
         <h2>添加到主屏幕</h2>
         {standalone ? (
-          <p className="ok">已在独立全屏模式运行（无 Safari 地址栏）。</p>
+          <>
+            <p className="ok">已在独立全屏模式运行（无 Safari 地址栏）。</p>
+            <p className="muted">
+              若顶栏仍像两层：长按主屏幕图标删除后，用 Safari 重新「添加到主屏幕」（状态栏样式在安装时固化）。
+            </p>
+          </>
         ) : ios ? (
           <ol className="install-steps">
             <li>点 Safari 底栏中间的「分享」按钮</li>
