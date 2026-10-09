@@ -14,6 +14,12 @@ if _CORE not in sys.path:
     sys.path.insert(0, _CORE)
 
 from hg_core import Cache, HGApi, Show  # noqa: E402
+from hg_core.sources import (  # noqa: E402
+    HuangdouSource,
+    HuangguoSource,
+    SourceRegistry,
+    YeguoSource,
+)
 
 from ..config import Settings
 from ..paths import (
@@ -40,7 +46,9 @@ def _atomic_write_json(path: str, data: Any) -> None:
 class AppState:
     def __init__(self) -> None:
         self.settings: Settings | None = None
-        self.api: HGApi | None = None
+        # SourceRegistry facade (catalog/search/detail/play); .huangguo_api for HGApi
+        self.api: SourceRegistry | None = None
+        self.registry: SourceRegistry | None = None
         self.out_dir: str = ""
         self.data_dir: str = ""
         self.show_index: dict[str, Show] = {}
@@ -63,7 +71,11 @@ class AppState:
             "http_proxy": settings.http_proxy,
             "cover_proxy": settings.cover_proxy,
             "cover_token": settings.cover_token,
+            "huangdou_api": settings.huangdou_api,
+            "yeguo_api": settings.yeguo_api,
+            "sources_enabled": settings.sources_enabled,
         })
+        self._merge_default_sources(settings)
         self._rebuild_api()
         self.show_index = {}
         self.events = {}
@@ -240,29 +252,106 @@ class AppState:
             self._persist_favorites_unlocked()
             return True
 
+    def _merge_default_sources(self, settings: Settings) -> None:
+        """旧 settings.json 可能缺少新接入片源或 API 地址，与出厂默认合并。"""
+        snap = R.snapshot()
+        factory = [
+            x.strip().lower()
+            for x in (settings.sources_enabled or "").split(",")
+            if x.strip()
+        ]
+        current = [
+            x.strip().lower()
+            for x in str(snap.get("sources_enabled") or "").split(",")
+            if x.strip()
+        ]
+        if not factory:
+            return
+        factory_set = set(factory)
+        current_set = set(current)
+        patch: dict[str, Any] = {}
+        if factory_set - current_set:
+            order = {name: i for i, name in enumerate(factory)}
+            merged = sorted(factory_set | current_set, key=lambda x: order.get(x, 99))
+            patch["sources_enabled"] = ",".join(merged)
+        active = factory_set | current_set
+        if "yeguo" in active and not str(snap.get("yeguo_api") or "").strip():
+            patch["yeguo_api"] = settings.yeguo_api
+        if "huangdou" in active and not str(snap.get("huangdou_api") or "").strip():
+            patch["huangdou_api"] = settings.huangdou_api
+        if patch:
+            R.update(patch)
+
     def _rebuild_api(self) -> None:
         assert self.settings is not None
         snap = R.snapshot()
+        proxy = str(snap.get("http_proxy") or "")
         cache = Cache(os.path.join(self.data_dir, CACHE_NAME))
-        self.api = HGApi(
+        hg = HGApi(
             snap.get("hg_api") or self.settings.hg_api,
             cache=cache,
             cache_ttl=self.settings.cache_ttl,
             timeout=20,
-            proxy=str(snap.get("http_proxy") or ""),
+            proxy=proxy,
         )
+        enabled_raw = str(
+            snap.get("sources_enabled") or self.settings.sources_enabled or "huangguo"
+        )
+        enabled = {
+            x.strip().lower()
+            for x in enabled_raw.replace("，", ",").split(",")
+            if x.strip()
+        }
+        if not enabled:
+            enabled = {"huangguo"}
+
+        reg = SourceRegistry()
+        if "huangguo" in enabled:
+            reg.register(HuangguoSource(hg))
+        if "huangdou" in enabled:
+            reg.register(
+                HuangdouSource(
+                    str(snap.get("huangdou_api") or self.settings.huangdou_api or ""),
+                    timeout=20,
+                    proxy=proxy,
+                )
+            )
+        if "yeguo" in enabled:
+            reg.register(
+                YeguoSource(
+                    str(snap.get("yeguo_api") or self.settings.yeguo_api or ""),
+                    timeout=20,
+                    proxy=proxy,
+                )
+            )
+        # always keep at least 黄果 so downloads don't hard-fail
+        if not reg.list_sources():
+            reg.register(HuangguoSource(hg))
+
+        self.registry = reg
+        self.api = reg
         self.settings.cover_proxy = str(snap.get("cover_proxy") or "")
         self.settings.cover_token = str(snap.get("cover_token") or "")
         self.settings.hg_api = str(snap.get("hg_api") or self.settings.hg_api)
-        self.settings.http_proxy = str(snap.get("http_proxy") or "")
+        self.settings.http_proxy = proxy
+        self.settings.huangdou_api = str(
+            snap.get("huangdou_api") or self.settings.huangdou_api or ""
+        )
+        self.settings.yeguo_api = str(
+            snap.get("yeguo_api") or self.settings.yeguo_api or ""
+        )
+        self.settings.sources_enabled = ",".join(
+            s["name"] for s in reg.list_sources()
+        )
 
     def apply_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         snap = R.update(patch)
         self._rebuild_api()
         self.show_index.clear()
-        if self.api and self.api.cache:
-            self.api.cache.data = {
-                k: v for k, v in self.api.cache.data.items()
+        cache = self.api.cache if self.api else None
+        if cache is not None and getattr(cache, "data", None) is not None:
+            cache.data = {
+                k: v for k, v in cache.data.items()
                 if not (k.startswith("cat:") or k.startswith("search:"))
             }
         return snap

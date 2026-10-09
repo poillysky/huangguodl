@@ -11,6 +11,22 @@ function formatHot(n?: number) {
   return String(v);
 }
 
+const SOURCE_META: Record<string, { label: string; tone: string }> = {
+  huangguo: { label: "果", tone: "guo" },
+  huangdou: { label: "豆", tone: "dou" },
+  yeguo: { label: "野", tone: "ye" },
+};
+
+function sourceMeta(source?: string) {
+  const key = (source || "huangguo").trim().toLowerCase() || "huangguo";
+  return (
+    SOURCE_META[key] || {
+      label: key.slice(0, 2),
+      tone: "other",
+    }
+  );
+}
+
 export default function ShowGrid({
   items,
   variant = "grid",
@@ -26,6 +42,7 @@ export default function ShowGrid({
     <div className={variant === "rail" ? "poster-rail" : "poster-grid"}>
       {items.map((s) => {
         const hotText = formatHot(s.hot);
+        const src = sourceMeta(s.source);
         return (
           <article
             key={s.id}
@@ -48,7 +65,10 @@ export default function ShowGrid({
                   }}
                 />
               ) : null}
-              <span className="mark">18+</span>
+              <div className="tile-badges">
+                <span className="mark">18+</span>
+                <span className={`src-badge src-${src.tone}`}>{src.label}</span>
+              </div>
               {hotText ? (
                 <span className="hot">{hotText}</span>
               ) : (

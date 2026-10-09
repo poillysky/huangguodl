@@ -1,6 +1,7 @@
 import type Artplayer from "artplayer";
 import type Hls from "hls.js";
 import { useEffect, useRef, useState } from "react";
+import { getToken } from "../api/client";
 
 type BufferHud = {
   /** 中央缓冲 HUD */
@@ -242,6 +243,19 @@ function bindHls(
       fragLoadingTimeOut: 20000,
       fragLoadingMaxRetry: 6,
       manifestLoadingMaxRetry: 3,
+      xhrSetup(xhr, requestUrl) {
+        // 本机 /api/hls 代理：带上 Bearer（query access_token 已写进 m3u8 时仍兼容）
+        if (
+          typeof requestUrl === "string" &&
+          (requestUrl.startsWith("/api/") ||
+            requestUrl.includes("/api/hls"))
+        ) {
+          const token = getToken();
+          if (token) {
+            xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+          }
+        }
+      },
     });
     hls.loadSource(src);
     hls.attachMedia(video);

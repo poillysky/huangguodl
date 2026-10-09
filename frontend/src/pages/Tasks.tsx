@@ -208,7 +208,7 @@ export default function TasksPage() {
   }, [tasks]);
 
   return (
-    <PageShell title="下载" onRefresh={() => refresh()}>
+    <PageShell title="下载" back="/me" onRefresh={() => refresh()}>
       {!loading && tasks.length > 0 ? (
         <div className="task-summary">
           <span>
@@ -248,9 +248,9 @@ export default function TasksPage() {
           <button
             type="button"
             className="btn fav-empty-cta"
-            onClick={() => nav("/browse")}
+            onClick={() => nav("/huangguo")}
           >
-            去分类看看
+            去黄果看看
           </button>
         </div>
       ) : null}

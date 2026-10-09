@@ -1,10 +1,10 @@
 import { lazy, Suspense } from "react";
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useTabSwipe } from "./hooks/useTabSwipe";
 import BrowsePage from "./pages/Browse";
 import FavoritesPage from "./pages/Favorites";
-import HomePage from "./pages/Home";
 import MePage from "./pages/Me";
+import SearchPage from "./pages/Search";
 import SettingsPage from "./pages/Settings";
 import ShowDetailPage from "./pages/ShowDetail";
 import TaskDetailPage from "./pages/TaskDetail";
@@ -18,18 +18,21 @@ export default function App() {
   const hideTab = loc.pathname.startsWith("/play/");
   const tabSwipe =
     !hideTab &&
-    (loc.pathname === "/" ||
-      loc.pathname === "/browse" ||
-      loc.pathname === "/favorites" ||
-      loc.pathname === "/tasks" ||
+    (loc.pathname === "/huangguo" ||
+      loc.pathname === "/huangdou" ||
+      loc.pathname === "/yeguo" ||
       loc.pathname === "/me");
   useTabSwipe(tabSwipe);
 
   return (
     <div className={`app-shell${hideTab ? " play-shell" : ""}`}>
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/browse" element={<BrowsePage />} />
+        <Route path="/" element={<Navigate to="/huangguo" replace />} />
+        <Route path="/browse" element={<Navigate to="/huangguo" replace />} />
+        <Route path="/huangguo" element={<BrowsePage source="huangguo" />} />
+        <Route path="/huangdou" element={<BrowsePage source="huangdou" />} />
+        <Route path="/yeguo" element={<BrowsePage source="yeguo" />} />
+        <Route path="/search" element={<SearchPage />} />
         <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/show/:id" element={<ShowDetailPage />} />
         <Route
@@ -47,16 +50,18 @@ export default function App() {
       </Routes>
       {!hideTab && (
         <nav className="tabbar">
-          <NavLink to="/" end>
-            首页
-          </NavLink>
-          <NavLink to="/browse">分类</NavLink>
-          <NavLink to="/favorites">收藏</NavLink>
-          <NavLink to="/tasks">下载</NavLink>
+          <NavLink to="/huangguo">黄果</NavLink>
+          <NavLink to="/huangdou">黄豆</NavLink>
+          <NavLink to="/yeguo">野果</NavLink>
           <NavLink
             to="/me"
             className={({ isActive }) =>
-              isActive || loc.pathname.startsWith("/settings") ? "active" : undefined
+              isActive ||
+              loc.pathname.startsWith("/settings") ||
+              loc.pathname.startsWith("/favorites") ||
+              loc.pathname.startsWith("/tasks")
+                ? "active"
+                : undefined
             }
           >
             我的

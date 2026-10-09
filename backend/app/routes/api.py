@@ -19,6 +19,7 @@ from hg_core import (
     Show,
     build_cover_url,
     decrypt_cover_bytes,
+    is_hls_playlist_bytes,
     is_image_bytes,
     sniff_image_mime,
 )
@@ -34,6 +35,14 @@ from ..services.downloads import (
     set_task_follow,
     show_json,
     start_download,
+)
+from ..services.hls_proxy import (
+    MAX_BODY,
+    fetch_headers,
+    proxy_path,
+    referer_for,
+    rewrite_m3u8,
+    sniff_media_type,
 )
 from ..services.state import S
 
@@ -70,6 +79,9 @@ class SettingsBody(BaseModel):
     http_proxy: str | None = None
     cover_proxy: str | None = None
     cover_token: str | None = None
+    huangdou_api: str | None = None
+    yeguo_api: str | None = None
+    sources_enabled: str | None = None
 
 
 @router.get("/health")
@@ -78,11 +90,28 @@ def health() -> dict[str, Any]:
 
 
 @router.get("/config")
-def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+def config(
+    settings: Settings = Depends(get_settings),
+    source: str | None = Query(None, description="片源 slug，返回该源分类"),
+) -> dict[str, Any]:
     assert S.settings is not None
+    src = (source or "").strip().lower() or None
+    if S.api is not None:
+        cats = S.api.categories(source=src) if src else S.api.categories()
+        tags = S.api.tags(source=src) if src else []
+        filters = S.api.browse_filters(source=src) if src else {}
+    else:
+        cats = [{"value": k, "title": v} for k, v in CATEGORIES.items()]
+        tags = []
+        filters = {}
+    sources = S.api.list_sources() if S.api is not None else [{"name": "huangguo", "title": "黄果"}]
     return {
         "ok": True,
-        "categories": [{"value": k, "title": v} for k, v in CATEGORIES.items()],
+        "categories": cats,
+        "tags": tags,
+        "filters": filters,
+        "sources": sources,
+        "source": src,
         "out": S.out_dir,
         "data": S.data_dir,
         "api": S.settings.hg_api,
@@ -102,6 +131,9 @@ def get_runtime_settings() -> dict[str, Any]:
         "http_proxy": S.settings.http_proxy,
         "cover_proxy": S.settings.cover_proxy,
         "cover_token": S.settings.cover_token,
+        "huangdou_api": S.settings.huangdou_api,
+        "yeguo_api": S.settings.yeguo_api,
+        "sources_enabled": S.settings.sources_enabled,
         "out": S.out_dir,
         "data": S.data_dir,
     }
@@ -137,35 +169,78 @@ def catalog(
     page: int = 1,
     pageSize: int = 20,
     sort: str = "",
+    source: str = "",
+    tab: str = "",
 ) -> dict[str, Any]:
     assert S.api is not None
     sort_n = (sort or "").strip().lower()
     if sort_n not in ("hot", "new"):
         sort_n = ""
+    src = (source or "").strip().lower() or None
+    tab_n = (tab or "").strip() or None
     try:
-        shows = S.api.catalog(category, page, pageSize, sort=sort_n or None)
+        shows = S.api.catalog(
+            category,
+            page,
+            pageSize,
+            sort=sort_n or None,
+            source=src,
+            tab=tab_n,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"拉目录失败: {exc}") from exc
     for s in shows:
-        S.show_index[s.id] = s
+        S.show_index[s.key] = s
+        if (getattr(s, "source", None) or "huangguo") == "huangguo":
+            S.show_index[s.id] = s
     return {
         "items": [show_json(s) for s in shows],
         "category": category,
         "page": page,
         "sort": sort_n or None,
+        "source": src,
+        "tab": tab_n,
     }
 
 
-@router.get("/search")
-def search(q: str = Query(..., min_length=1), page: int = 1) -> dict[str, Any]:
+@router.get("/nav-tabs")
+def nav_tabs(
+    category: str = Query(..., min_length=1),
+    source: str = Query("huangdou"),
+) -> dict[str, Any]:
+    """黄豆等：某分类下的官方子 Tab。"""
     assert S.api is not None
+    src = (source or "").strip().lower() or "huangdou"
+    cat = (category or "").strip()
     try:
-        shows = S.api.search(q.strip(), page)
+        tabs = S.api.channel_tabs(cat, source=src)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"拉子分类失败: {exc}") from exc
+    return {"ok": True, "source": src, "category": cat, "tabs": tabs}
+
+
+@router.get("/search")
+def search(
+    q: str = Query(..., min_length=1),
+    page: int = 1,
+    source: str = "",
+) -> dict[str, Any]:
+    assert S.api is not None
+    src = (source or "").strip().lower() or None
+    try:
+        shows = S.api.search(q.strip(), page, source=src)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"搜索失败: {exc}") from exc
     for s in shows:
-        S.show_index[s.id] = s
-    return {"items": [show_json(s) for s in shows], "keyword": q, "page": page}
+        S.show_index[s.key] = s
+        if (getattr(s, "source", None) or "huangguo") == "huangguo":
+            S.show_index[s.id] = s
+    return {
+        "items": [show_json(s) for s in shows],
+        "keyword": q,
+        "page": page,
+        "source": src,
+    }
 
 
 class FavoriteBody(BaseModel):
@@ -177,6 +252,7 @@ class FavoriteBody(BaseModel):
     label: str = ""
     tags: list[str] = []
     hot: int = 0
+    source: str = ""
 
 
 @router.get("/favorites")
@@ -220,10 +296,11 @@ def _related_shows(show_id: str, detail: dict[str, Any], limit: int = 8) -> list
     for cat in ("hot", "new"):
         try:
             for s in S.api.catalog(cat, 1, 36):
-                if s.id in seen:
+                k = s.key
+                if k in seen or s.id in seen:
                     continue
-                seen.add(s.id)
-                S.show_index[s.id] = s
+                seen.add(k)
+                S.show_index[k] = s
                 pool.append(s)
         except Exception:  # noqa: BLE001
             continue
@@ -233,10 +310,11 @@ def _related_shows(show_id: str, detail: dict[str, Any], limit: int = 8) -> list
     if tag:
         try:
             for s in S.api.search(tag, 1)[:20]:
-                if s.id in seen:
+                k = s.key
+                if k in seen:
                     continue
-                seen.add(s.id)
-                S.show_index[s.id] = s
+                seen.add(k)
+                S.show_index[k] = s
                 pool.append(s)
         except Exception:  # noqa: BLE001
             pass
@@ -294,16 +372,20 @@ def show_detail(id: str = Query(..., min_length=1)) -> dict[str, Any]:
         breadcrumb = detail.get("breadcrumb")
         if isinstance(breadcrumb, list) and breadcrumb:
             channel = str((breadcrumb[0] or {}).get("name") or "")
+        src = getattr(show, "source", None) or "huangguo"
         show = Show(
-            id=str(detail.get("id") or id),
+            id=str(detail.get("id") or show.id or id),
             title=title,
             total=total,
             finished=finished,
             cover=cover,
             tags=tags,
             hot=hot,
+            source=src,
         )
-        S.show_index[show.id] = show
+        S.show_index[show.key] = show
+        if src == "huangguo":
+            S.show_index[show.id] = show
     else:
         title = show.title or id
         cover = show.cover
@@ -319,7 +401,9 @@ def show_detail(id: str = Query(..., min_length=1)) -> dict[str, Any]:
 
     # 猜你喜欢走独立接口，避免拖慢详情首屏
     return {
-        "id": show.id,
+        "id": show.key,
+        "nativeId": show.id,
+        "source": getattr(show, "source", None) or "huangguo",
         "title": title,
         "cover": cover,
         "tags": tags,
@@ -352,24 +436,108 @@ def show_related(
     if not tag_list and show.tags:
         tag_list = [str(t) for t in show.tags if t]
     raw: dict[str, Any] = {"tags": tag_list}
+    pub_id = show.key if hasattr(show, "key") else str(show.id or id)
     try:
-        items = _related_shows(str(show.id or id), raw, limit=limit)
+        items = _related_shows(pub_id, raw, limit=limit)
     except Exception:  # noqa: BLE001
         items = []
-    return {"ok": True, "id": str(show.id or id), "items": items}
+    return {"ok": True, "id": pub_id, "items": items}
 
 
 @router.get("/play")
-def play(id: str = Query(..., min_length=1), ep: int = Query(1, ge=1)) -> dict[str, Any]:
+def play(
+    id: str = Query(..., min_length=1),
+    ep: int = Query(1, ge=1),
+    proxy: bool = Query(True, description="经本机 HLS 代理，供浏览器取证播放"),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
     assert S.api is not None
     try:
         show = find_show(id)
-        url = S.api.play_url(show, ep)
+        raw = S.api.play_url(show, ep)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"取播放地址失败: {exc}") from exc
-    if not url:
+    if not raw:
         raise HTTPException(404, "没有播放地址")
-    return {"id": id, "ep": ep, "url": url}
+    token = (settings.api_token or "").strip()
+    url = (
+        proxy_path(raw, access_token=token, referer=referer_for(raw))
+        if proxy
+        else raw
+    )
+    return {"id": id, "ep": ep, "url": url, "rawUrl": raw}
+
+
+@router.get("/hls")
+def hls_proxy(
+    url: str = Query(..., min_length=1),
+    ref: str | None = Query(None, description="上游 Referer，分片 CDN 常用源站"),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """代理上游 HLS：补 Referer，并把 m3u8 内 URI 改写到本接口。"""
+    assert S.api is not None
+    final = (url or "").strip()
+    if final.startswith("//"):
+        final = "https:" + final
+    _assert_public_url(final)
+
+    sticky_ref = (ref or "").strip()
+    if sticky_ref:
+        _assert_public_url(sticky_ref)
+
+    headers = fetch_headers(final)
+    if sticky_ref:
+        headers["Referer"] = sticky_ref
+        rp = urlparse(sticky_ref)
+        if rp.scheme and rp.netloc:
+            headers["Origin"] = f"{rp.scheme}://{rp.netloc}"
+
+    try:
+        req = urllib.request.Request(final, headers=headers)
+        with S.api.open(req, timeout=30) as resp:
+            data = resp.read(MAX_BODY + 1)
+            ct = resp.headers.get("Content-Type") or ""
+            final_url = resp.geturl() or final
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"拉流失败: {exc}") from exc
+
+    if not data:
+        raise HTTPException(502, "拉流空响应")
+    if len(data) > MAX_BODY:
+        raise HTTPException(502, "分片过大，已拒绝")
+
+    token = (settings.api_token or "").strip()
+    # 首包未带 ref 时，用当前源站固定后续分片防盗链
+    chain_ref = sticky_ref or referer_for(final_url)
+
+    if is_hls_playlist_bytes(data):
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("utf-8", "replace")
+        body = rewrite_m3u8(
+            text,
+            final_url,
+            lambda u: proxy_path(u, access_token=token, referer=chain_ref),
+        ).encode("utf-8")
+        return Response(
+            content=body,
+            media_type="application/vnd.apple.mpegurl",
+            headers={
+                "Cache-Control": "no-store",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    mime = sniff_media_type(final_url, data, ct)
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Cache-Control": "public, max-age=120",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 @router.get("/episodes")
@@ -477,29 +645,49 @@ async def task_events(tid: str, request: Request) -> EventSourceResponse:
 
 
 def _assert_public_url(url: str) -> None:
-    """SSRF 防护：/api/cover 的 url 由调用方给定，必须拒绝内网目标。
+    """SSRF 防护：/api/cover、/api/hls 的 url 由调用方给定，必须拒绝内网目标。
 
     拦截 loopback / 私网 / 链路本地(169.254.x.x 云元数据) / 保留段 / 组播，
     以及非 http(s) 协议（file://、gopher:// 等）。
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise HTTPException(400, "仅支持 http/https 封面地址")
+        raise HTTPException(400, "仅支持 http/https 地址")
     host = parsed.hostname or ""
     if not host:
-        raise HTTPException(400, "封面地址缺少主机名")
+        raise HTTPException(400, "地址缺少主机名")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
-        raise HTTPException(502, f"封面域名无法解析: {exc}") from exc
+        raise HTTPException(502, f"域名无法解析: {exc}") from exc
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             continue
         if not ip.is_global:
-            raise HTTPException(400, f"封面地址指向内网，已拒绝（{ip}）")
+            raise HTTPException(400, f"地址指向内网，已拒绝（{ip}）")
+
+
+def _cover_referer(final_url: str) -> str:
+    """按 CDN 选 Referer：野果图床需野果站 Origin，黄果走 hg base。"""
+    assert S.api is not None
+    host = (urlparse(final_url).hostname or "").lower()
+    yeguo_markers = (
+        "yeguo",
+        "yeguodj",
+        "buxefaex",
+        "wvxrrip",
+        "tjecfkte",
+        "udhhzr",
+    )
+    if any(m in host for m in yeguo_markers):
+        src = S.api.get("yeguo")
+        site = str(getattr(src, "site", "") or getattr(src, "base", "") or "").strip()
+        if site:
+            return site.rstrip("/") + "/"
+    return f"{S.api.base}/"
 
 
 @router.get("/cover")
@@ -523,7 +711,7 @@ def cover_proxy(url: str = Query(..., min_length=1)) -> Response:
 
     headers = {
         "User-Agent": DEFAULT_HEADERS["User-Agent"],
-        "Referer": f"{S.api.base}/",
+        "Referer": _cover_referer(final),
         "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
     }
     data = b""

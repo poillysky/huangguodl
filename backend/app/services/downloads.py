@@ -20,6 +20,7 @@ from hg_core import (
     show_dir,
     target_path,
 )
+from hg_core.ids import DEFAULT_SOURCE, make_key, parse_key
 
 from .completions import C
 from .state import S
@@ -42,9 +43,18 @@ def _ep_semaphore() -> threading.Semaphore:
     return _ep_sema
 
 
+def _adapter_for(show: Show) -> Any:
+    """Resolve per-source adapter for play/cover download."""
+    assert S.api is not None
+    if hasattr(S.api, "source_for"):
+        return S.api.source_for(show)
+    return S.api
+
+
 def _download_guarded(job: Any, api: Any, out_dir: str, *, force: bool = False) -> Any:
     with _ep_semaphore():
-        return download(job, api, out_dir, timeout=60, retries=3, force=force)
+        adapter = _adapter_for(job.show) if hasattr(job, "show") else api
+        return download(job, adapter, out_dir, timeout=60, retries=3, force=force)
 
 
 class _CoverArgs:
@@ -55,9 +65,21 @@ class _CoverArgs:
         self.timeout = 30
 
 
+def _index_show(s: Show) -> None:
+    """Index by composite key and bare id (huangguo only, for legacy links)."""
+    key = s.key if getattr(s, "source", None) else make_key(DEFAULT_SOURCE, s.id)
+    S.show_index[key] = s
+    if (getattr(s, "source", None) or DEFAULT_SOURCE) == DEFAULT_SOURCE:
+        S.show_index[s.id] = s
+
+
 def show_json(s: Show) -> dict[str, Any]:
+    src = getattr(s, "source", None) or DEFAULT_SOURCE
+    key = s.key if hasattr(s, "key") else make_key(src, s.id)
     return {
-        "id": s.id,
+        "id": key,  # public id is always source:native
+        "nativeId": s.id,
+        "source": src,
         "title": s.title,
         "total": s.total,
         "finished": s.finished,
@@ -70,28 +92,54 @@ def show_json(s: Show) -> dict[str, Any]:
 
 def find_show(tid: str) -> Show:
     assert S.api is not None
+    tid = str(tid or "").strip()
     if tid in S.show_index:
         return S.show_index[tid]
+    src_name, nid = parse_key(tid)
+    # also try bare native under that source
+    alt = make_key(src_name, nid)
+    if alt in S.show_index:
+        return S.show_index[alt]
+
     for cat in ("hot", "new"):
         try:
-            for s in S.api.catalog(cat, 1):
-                S.show_index[s.id] = s
+            for s in S.api.catalog(cat, 1, source=src_name):
+                _index_show(s)
         except Exception:  # noqa: BLE001
             continue
-        if tid in S.show_index:
+        if tid in S.show_index or alt in S.show_index:
             break
     if tid in S.show_index:
         return S.show_index[tid]
-    # 直链进详情时列表里可能没有，用详情接口补一条
+    if alt in S.show_index:
+        return S.show_index[alt]
+
+    # 直链进详情：用对应片源详情补一条
     try:
-        raw = S.api.detail(Show(id=tid, title=""))
-        show = S.api._to_show(raw) if isinstance(raw, dict) else None
+        stub = Show(id=nid, title="", source=src_name)
+        raw = S.api.detail(stub)
+        show = None
+        if isinstance(raw, dict):
+            src = S.api.source_for(stub)
+            if hasattr(src, "_to_show"):
+                show = src._to_show(raw)
+            elif S.api.huangguo_api and src_name == DEFAULT_SOURCE:
+                show = S.api.huangguo_api._to_show(raw)
+            if show is None and raw.get("title"):
+                show = Show(
+                    id=str(raw.get("id") or nid),
+                    title=str(raw.get("title") or nid),
+                    source=src_name,
+                    cover=str(raw.get("cover") or ""),
+                    total=int(raw.get("episode_count") or raw.get("total") or 0),
+                )
         if show:
-            S.show_index[show.id] = show
+            show.source = src_name
+            _index_show(show)
             return show
     except Exception:  # noqa: BLE001
         pass
-    return Show(id=tid, title="")
+    return Show(id=nid or tid, title="", source=src_name)
 
 
 def _plan_by_records(
@@ -103,7 +151,8 @@ def _plan_by_records(
     force: bool = False,
 ) -> tuple[list[Job], list[int]]:
     """按完成记录规划待下集；force 时清记录并删本地后全部重下。"""
-    done = set() if force else C.done_eps(show.id)
+    vid = show.key if hasattr(show, "key") else show.id
+    done = set() if force else C.done_eps(vid)
     jobs: list[Job] = []
     have: list[int] = []
     for e in eps:
@@ -113,7 +162,7 @@ def _plan_by_records(
         ext = os.path.splitext(e.get("url", "") or "")[1] or ".mp4"
         path = target_path(show, n, ext, out_dir)
         if force:
-            C.unmark(show.id, n)
+            C.unmark(vid, n)
             remove_episode_media(show, n, out_dir, ext)
             jobs.append(
                 Job(
@@ -140,8 +189,14 @@ def _plan_by_records(
     return jobs, have
 
 
+def _show_vid(show: Show) -> str:
+    return show.key if hasattr(show, "key") else make_key(
+        getattr(show, "source", None) or DEFAULT_SOURCE, show.id
+    )
+
+
 def _mark_item_done(show: Show, ep: int) -> None:
-    C.mark(show.id, ep, title=show.title)
+    C.mark(_show_vid(show), ep, title=show.title)
 
 
 def start_download(body: dict[str, Any]) -> dict[str, Any]:
@@ -169,14 +224,19 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
     cands: list[Any] = []
     if vid:
         found = find_show(vid)
+        src_name, nid = parse_key(vid)
+        if found.id:
+            nid = found.id
+            src_name = getattr(found, "source", None) or src_name
         show = Show(
-            id=vid,
-            title=(found.title or title or vid).strip(),
+            id=nid,
+            title=(found.title or title or nid).strip(),
             total=int(found.total or 0),
             finished=bool(found.finished),
             cover=found.cover or "",
             tags=list(found.tags or []),
             hot=int(found.hot or 0),
+            source=src_name,
         )
     if not show:
         if not title:
@@ -186,10 +246,10 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
             return {
                 "ok": False,
                 "error": "未匹配到剧名",
-                "candidates": [{"id": c.id, "title": c.title} for c in cands],
+                "candidates": [show_json(c) for c in cands],
             }
 
-    S.show_index[show.id] = show
+    _index_show(show)
     eps = S.api.episodes(show)
     jobs, have = _plan_by_records(
         show, eps, ep_filter=ep_filter, out_dir=out_dir, force=force,
@@ -197,7 +257,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
 
     # 同剧已有排队/下载中：直接复用
     for existing in S.all_tasks():
-        if existing.get("vid") == show.id and existing.get("status") in (
+        if existing.get("vid") == _show_vid(show) and existing.get("status") in (
             "queued",
             "running",
         ):
@@ -215,7 +275,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
     # 追更：同剧已有完成任务时，把新增集并入该任务
     if jobs and not force:
         for existing in list(S.all_tasks()):
-            if existing.get("vid") != show.id:
+            if existing.get("vid") != _show_vid(show):
                 continue
             if existing.get("status") not in ("done", "error", "queued"):
                 continue
@@ -248,7 +308,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
 
     if not jobs and follow:
         for existing in list(S.all_tasks()):
-            if existing.get("vid") == show.id:
+            if existing.get("vid") == _show_vid(show):
                 existing["follow"] = True
                 S.put_task(existing)
                 return {
@@ -273,7 +333,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
     # 强制重下或新建：清掉同剧旧完成/失败卡（追更任务会保留由上面 merge 处理）
     if force or jobs:
         for existing in list(S.all_tasks()):
-            if existing.get("vid") == show.id and existing.get("status") in (
+            if existing.get("vid") == _show_vid(show) and existing.get("status") in (
                 "done",
                 "error",
             ):
@@ -321,7 +381,7 @@ def start_download(body: dict[str, Any]) -> dict[str, Any]:
         "created": time.time(),
         "status": "queued" if jobs else "done",
         "title": show.title,
-        "vid": show.id,
+        "vid": _show_vid(show),
         "out": out_dir,
         "folder": os.path.basename(show_dir(show, out_dir)),
         "cover": with_cover,
@@ -396,7 +456,7 @@ def _merge_new_eps_into_task(
             changed = True
 
     # 远端已有、记录也有、任务里还没有的集补成 ok
-    recorded = C.done_eps(show.id)
+    recorded = C.done_eps(_show_vid(show))
     for e in eps:
         n = int(e["n"])
         if n in by_item:
@@ -503,7 +563,8 @@ def run_download(tid: str) -> dict[str, Any]:
         j = by_ep.get(n)
         path = (j.path if j else "") or target_path(show, n, ".mp4", out_dir)
         it["path"] = path
-        if not force and n in C.done_eps(show.id):
+        done_set = C.done_eps(_show_vid(show))
+        if not force and n in done_set:
             it["status"] = "ok"
             it["note"] = it.get("note") or "记录已有"
             continue
@@ -513,7 +574,7 @@ def run_download(tid: str) -> dict[str, Any]:
                 it["note"] = "覆盖重下"
             elif not it.get("note"):
                 it["note"] = ""
-        elif n in C.done_eps(show.id):
+        elif n in done_set:
             it["status"] = "ok"
             it["note"] = "记录已有"
         else:
@@ -555,7 +616,9 @@ def run_download(tid: str) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 pass
             if with_cover and not task.get("coverOk"):
-                good, note = download_cover(show, S.api, out_dir, _CoverArgs())
+                good, note = download_cover(
+                    show, _adapter_for(show), out_dir, _CoverArgs()
+                )
                 task["coverNote"] = note
                 task["coverOk"] = good
                 S.push_event(tid, {"type": "cover", "ok": good, "note": note})
@@ -650,19 +713,27 @@ def check_follow_tasks(*, min_gap: float = 0.0) -> dict[str, Any]:
         try:
             show = find_show(vid)
             if not show.title:
+                src_name, nid = parse_key(vid)
                 show = Show(
-                    id=vid,
-                    title=str(task.get("title") or vid),
+                    id=nid or vid,
+                    title=str(task.get("title") or nid or vid),
                     total=int(task.get("total") or 0),
+                    source=src_name,
                 )
             # 刷新详情 finished / total
             try:
                 detail = S.api.detail(show)
                 if isinstance(detail, dict):
-                    s2 = S.api._to_show(detail)
+                    src = S.api.source_for(show)
+                    s2 = None
+                    if hasattr(src, "_to_show"):
+                        s2 = src._to_show(detail)
+                    elif S.api.huangguo_api:
+                        s2 = S.api.huangguo_api._to_show(detail)
                     if s2:
+                        s2.source = getattr(show, "source", None) or DEFAULT_SOURCE
                         show = s2
-                        S.show_index[show.id] = show
+                        _index_show(show)
             except Exception:  # noqa: BLE001
                 pass
             eps = S.api.episodes(show)

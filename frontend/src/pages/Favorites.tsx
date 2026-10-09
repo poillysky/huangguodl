@@ -30,7 +30,7 @@ export default function FavoritesPage() {
   const empty = !loading && !error && items.length === 0;
 
   return (
-    <PageShell title="收藏" onRefresh={refresh}>
+    <PageShell title="收藏" back="/me" onRefresh={refresh}>
       {error ? (
         <div className="fav-banner err" role="alert">
           <p>{error}</p>
@@ -65,9 +65,9 @@ export default function FavoritesPage() {
           <button
             type="button"
             className="btn fav-empty-cta"
-            onClick={() => nav("/browse")}
+            onClick={() => nav("/huangguo")}
           >
-            去分类看看
+            去黄果看看
           </button>
         </div>
       ) : null}

@@ -8,7 +8,15 @@ from typing import Any
 from ..paths import SETTINGS_NAME, ensure_dir
 
 # keys editable from UI / API
-EDITABLE = ("hg_api", "http_proxy", "cover_proxy", "cover_token")
+EDITABLE = (
+    "hg_api",
+    "http_proxy",
+    "cover_proxy",
+    "cover_token",
+    "huangdou_api",
+    "yeguo_api",
+    "sources_enabled",  # comma list: huangguo,huangdou,yeguo
+)
 
 
 class RuntimeSettings:

@@ -363,6 +363,14 @@ class Show:
     cover: str = ""  # 加密封面地址（可能需要代理解密）
     tags: list[str] = field(default_factory=list)
     hot: int = 0  # 官方热门值
+    source: str = "huangguo"  # 片源 slug：huangguo / huangdou / ...
+
+    @property
+    def key(self) -> str:
+        """跨源唯一键：source:native_id。"""
+        from hg_core.ids import make_key
+
+        return make_key(self.source or "huangguo", self.id)
 
     @property
     def label(self) -> str:
@@ -454,7 +462,14 @@ class HGApi:
 
     @staticmethod
     def _to_show(raw: dict) -> Show | None:
-        rid = str(raw.get("id") or raw.get("vod_id") or "").strip()
+        # 排行榜接口用 video_id；普通列表用 id / vod_id
+        rid = str(
+            raw.get("id")
+            or raw.get("vod_id")
+            or raw.get("video_id")
+            or raw.get("drama_id")
+            or ""
+        ).strip()
         if not rid:
             return None
         title = str(raw.get("title") or raw.get("vod_name") or raw.get("name") or rid).strip()
@@ -476,12 +491,25 @@ class HGApi:
                         tags.append(name)
         hot = 0
         try:
-            hot = int(raw.get("hot") or raw.get("heat") or 0)
+            # 排行榜常给 metric_value / score，普通列表给 hot
+            hot = int(
+                raw.get("hot")
+                or raw.get("heat")
+                or raw.get("metric_value")
+                or 0
+            )
         except (TypeError, ValueError):
             hot = 0
-        return Show(id=rid, title=title, total=total,
-                    finished=_truthy(raw.get("is_finished")), cover=cover, tags=tags,
-                    hot=hot)
+        return Show(
+            id=rid,
+            title=title,
+            total=total,
+            finished=_truthy(raw.get("is_finished")),
+            cover=cover,
+            tags=tags,
+            hot=hot,
+            source="huangguo",
+        )
 
     def _parse_tag_page(self, html: str) -> list[dict]:
         """从官方 /tag/{slug}/ 主列表 SSR 卡片解析目录项。"""
@@ -571,7 +599,15 @@ class HGApi:
             log(f"标签页不可用 {path}: {exc}", level="warn")
 
         # 搜索中文题材名（比无效的 ?tag= 可靠）
-        label = CATEGORIES.get(f"tag:{slug}", "") or slug
+        label = ""
+        try:
+            for s, n in self.list_tags():
+                if s == slug:
+                    label = n
+                    break
+        except RuntimeError:
+            pass
+        label = label or CATEGORIES.get(f"tag:{slug}", "") or slug
         try:
             shows = self.search(label, page)
             if shows:
@@ -579,6 +615,67 @@ class HGApi:
         except RuntimeError as exc:
             log(f"题材搜索兜底失败 {label}: {exc}", level="warn")
         return []
+
+    def list_tags(self) -> list[tuple[str, str]]:
+        """官方 /api/tags：[(slug, name), ...]，按 hot_score 降序去重。"""
+        key = "huangguo:api_tags:v1"
+        if self.cache:
+            hit = self.cache.get(key, self.cache_ttl)
+            if isinstance(hit, list) and hit:
+                return [(str(a), str(b)) for a, b in hit if a and b]
+
+        try:
+            raw = self._get(f"{self.base}/api/tags")
+        except RuntimeError as exc:
+            log(f"拉题材列表失败: {exc}", level="warn")
+            # 静态表兜底，保证筛选不空
+            return [
+                (k[4:], v)
+                for k, v in CATEGORIES.items()
+                if k.startswith("tag:")
+            ]
+
+        node = raw.get("data") if isinstance(raw, dict) else None
+        cats = []
+        if isinstance(node, dict):
+            cats = node.get("categories") or []
+        elif isinstance(raw, dict):
+            cats = raw.get("categories") or []
+
+        scored: list[tuple[int, str, str]] = []
+        seen: set[str] = set()
+        if isinstance(cats, list):
+            for cat in cats:
+                if not isinstance(cat, dict):
+                    continue
+                tags = cat.get("tags") or []
+                if not isinstance(tags, list):
+                    continue
+                for t in tags:
+                    if not isinstance(t, dict):
+                        continue
+                    slug = str(t.get("slug") or "").strip().lower()
+                    name = str(t.get("name") or slug).strip()
+                    if not slug or slug in seen:
+                        continue
+                    seen.add(slug)
+                    try:
+                        hot = int(t.get("hot_score") or t.get("hot") or 0)
+                    except (TypeError, ValueError):
+                        hot = 0
+                    scored.append((hot, slug, name))
+
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        out = [(slug, name) for _h, slug, name in scored]
+        if not out:
+            out = [
+                (k[4:], v)
+                for k, v in CATEGORIES.items()
+                if k.startswith("tag:")
+            ]
+        if self.cache and out:
+            self.cache.set(key, out)
+        return out
 
     # -- 目录 ------------------------------------------------------------
     def catalog(
@@ -629,7 +726,8 @@ class HGApi:
                     {"page": page, "page_size": page_size, "sort": sort_n})))
 
         shows = [s for s in (self._to_show(r) for r in items) if s]
-        if self.cache:
+        # 空结果不落缓存，避免排行榜解析失败等短暂故障被缓存半小时
+        if self.cache and shows:
             self.cache.set(key, [asdict(s) for s in shows])
         return shows
 
@@ -1255,7 +1353,8 @@ def write_tvshow_nfo(
         "  <status>"
         f"{'Ended' if show.finished else 'Continuing'}"
         "</status>\n"
-        f"  <uniqueid type=\"huangguo\" default=\"true\">{_xml_text(show.id)}</uniqueid>\n"
+        f"  <uniqueid type=\"{_xml_text(show.source or 'huangguo')}\" default=\"true\">"
+        f"{_xml_text(show.id)}</uniqueid>\n"
         "</tvshow>\n"
     )
     with open(path, "w", encoding="utf-8") as fh:
@@ -1296,7 +1395,8 @@ def write_episode_nfo(
         f"  <season>{EMBY_SEASON}</season>\n"
         f"  <episode>{int(ep)}</episode>\n"
         f"  <plot>{_xml_text(title)}</plot>\n"
-        f"  <uniqueid type=\"huangguo\" default=\"true\">{_xml_text(show.id)}-{int(ep)}</uniqueid>\n"
+        f"  <uniqueid type=\"{_xml_text(show.source or 'huangguo')}\" default=\"true\">"
+        f"{_xml_text(show.id)}-{int(ep)}</uniqueid>\n"
         "</episodedetails>\n"
     )
     with open(path, "w", encoding="utf-8") as fh:

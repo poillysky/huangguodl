@@ -3,9 +3,19 @@ import PageShell from "../components/PageShell";
 
 const LINKS = [
   {
+    to: "/favorites",
+    title: "收藏",
+    desc: "已收藏的剧集",
+  },
+  {
+    to: "/tasks",
+    title: "下载",
+    desc: "下载任务与追更",
+  },
+  {
     to: "/settings",
     title: "配置",
-    desc: "代理、上游 API、封面 Token",
+    desc: "代理、上游 API、片源开关",
   },
 ] as const;
 

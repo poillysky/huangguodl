@@ -211,7 +211,7 @@ html.playing .app-shell.play-shell.has-cover::before {
 .ptr-body {
   padding: 0 14px 16px;
   min-height: 100%;
-  will-change: transform;
+  /* 勿常驻 will-change/transform：会形成包含块，导致内部 sticky 被页面一起推走 */
   backface-visibility: hidden;
 }
 
@@ -256,7 +256,7 @@ html.playing .app-shell.play-shell.has-cover::before {
   color: var(--gold);
 }
 
-/* 搜索 + 标签：上滚时吸在内容区顶部（顶栏下方） */
+/* 页面内吸顶块（搜索已并入顶栏） */
 .page-sticky {
   position: sticky;
   top: 0;
@@ -273,6 +273,46 @@ html.playing .app-shell.play-shell.has-cover::before {
   align-items: center;
   min-height: 44px;
   padding: 0 4px 6px;
+}
+
+.topbar-row-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px 8px;
+  min-height: 44px;
+}
+
+.topbar-start {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.topbar-title-block {
+  min-width: 0;
+  text-align: left;
+}
+
+.topbar-row-start .topbar-title {
+  text-align: left;
+  font-size: 18px;
+}
+
+.topbar-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.topbar-extra {
+  padding: 0 12px 10px;
+}
+
+.search-page-row {
+  margin: 10px 0 8px;
 }
 
 .topbar-side {
@@ -680,19 +720,18 @@ html.playing .app-shell.play-shell.has-cover::before {
   border: 1px solid var(--line);
 }
 
-.filters-sticky {
-  padding-top: 4px;
-  padding-bottom: 6px;
-}
-
-.filters-sticky .filters {
-  margin: 0;
+.search-hint {
+  margin: 8px 0 4px;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .filters {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin: 4px 0 10px;
   padding: 8px 8px;
   border: 1px solid rgba(212, 162, 74, 0.28);
@@ -700,14 +739,55 @@ html.playing .app-shell.play-shell.has-cover::before {
   background: #1c1a22;
 }
 
-.filter-row {
+/* 题材：挂在分类大类之下，按组整理 */
+.filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.filter-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-block-head .filter-lab {
+  padding-top: 0;
+  line-height: 22px;
+}
+
+.filter-genre-group {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   min-width: 0;
 }
 
+.filter-genre-title {
+  flex: 0 0 28px;
+  padding-top: 4px;
+  color: rgba(212, 162, 74, 0.75);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
 .filter-row-scroll {
+  align-items: center;
+}
+
+.filter-row-seg {
   align-items: center;
 }
 
@@ -717,11 +797,17 @@ html.playing .app-shell.play-shell.has-cover::before {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.2;
+  letter-spacing: 0.04em;
 }
 
 .filter-row-scroll .filter-lab {
-  align-self: flex-start;
-  padding-top: 5px;
+  padding-top: 0;
+  line-height: 22px;
+}
+
+.filter-row-seg .filter-lab {
+  padding-top: 0;
+  line-height: 28px;
 }
 
 .chips {
@@ -731,14 +817,13 @@ html.playing .app-shell.play-shell.has-cover::before {
   min-width: 0;
 }
 
-/* 题材：固定两行，多出的横向滑 */
-.chips-scroll-2 {
+/* 分类 / 题材：单行横滑 */
+.chips-scroll {
   flex: 1;
-  display: grid;
-  grid-template-rows: auto auto;
-  grid-auto-flow: column;
-  grid-auto-columns: max-content;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 4px;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -747,11 +832,12 @@ html.playing .app-shell.play-shell.has-cover::before {
   padding-bottom: 1px;
 }
 
-.chips-scroll-2::-webkit-scrollbar {
+.chips-scroll::-webkit-scrollbar {
   display: none;
 }
 
-.chips-scroll-2 .chip {
+.chips-scroll .chip {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -772,6 +858,64 @@ html.playing .app-shell.play-shell.has-cover::before {
   border-color: var(--gold);
   color: var(--gold);
   font-weight: 600;
+}
+
+/* 排序 / 状态：分段控件，少选项互斥 */
+.seg {
+  --seg-n: 3;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--seg-n), minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #121118;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.seg-item {
+  appearance: none;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.seg-item:active:not(.on) {
+  color: var(--ink);
+}
+
+.seg-item.on {
+  background: linear-gradient(
+    180deg,
+    rgba(212, 162, 74, 0.28),
+    rgba(212, 162, 74, 0.14)
+  );
+  color: #f0d49a;
+  font-weight: 600;
+  box-shadow:
+    0 1px 0 rgba(212, 162, 74, 0.22),
+    inset 0 1px 0 rgba(255, 220, 160, 0.12);
+}
+
+.seg-item:focus-visible {
+  outline: 1px solid var(--gold);
+  outline-offset: 1px;
 }
 
 .poster-grid {
@@ -804,6 +948,7 @@ html.playing .app-shell.play-shell.has-cover::before {
 }
 
 .rail-tile .mark,
+.rail-tile .src-badge,
 .rail-tile .hot,
 .rail-tile .ep {
   font-size: 10px;
@@ -844,17 +989,55 @@ html.playing .app-shell.play-shell.has-cover::before {
   font-weight: 600;
 }
 
-.mark {
+.tile-badges {
   position: absolute;
   left: 8px;
   top: 8px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mark {
   background: #c0392b;
   color: #fff;
   font-size: 11px;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
+  line-height: 1.2;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.src-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.src-badge.src-guo {
+  background: linear-gradient(135deg, #e0b35a, #b8842e);
+  color: #1a1408;
+}
+
+.src-badge.src-dou {
+  background: linear-gradient(135deg, #7cb87a, #3f7a45);
+  color: #f4fff2;
+}
+
+.src-badge.src-ye {
+  background: linear-gradient(135deg, #c97a5a, #8f4a32);
+  color: #fff8f2;
+}
+
+.src-badge.src-other {
+  background: rgba(40, 90, 140, 0.9);
+  color: #e8f2ff;
 }
 
 .ep,
@@ -904,8 +1087,7 @@ html.playing .app-shell.play-shell.has-cover::before {
   flex: 0 0 auto;
   position: relative;
   width: 100%;
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  display: flex;
   align-items: stretch;
   background: #1a1820;
   border-top: 1px solid var(--line);
@@ -916,12 +1098,14 @@ html.playing .app-shell.play-shell.has-cover::before {
 }
 
 .tabbar a {
+  flex: 1 1 0;
+  min-width: 0;
   text-align: center;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  min-height: 62px;
-  padding: 4px 2px 30px;
+  min-height: 44px;
+  padding: 8px 4px;
   color: var(--muted);
   font-size: 13.5px;
   font-weight: 500;

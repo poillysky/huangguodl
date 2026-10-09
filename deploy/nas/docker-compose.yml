@@ -3,7 +3,7 @@
 
 services:
   huangguodl:
-    image: poillysky/huangguodl:v1.0.5
+    image: poillysky/huangguodl:v1.0.6
     container_name: huangguodl
     restart: always
     ports:

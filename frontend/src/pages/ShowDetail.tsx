@@ -203,11 +203,22 @@ export default function ShowDetailPage() {
     });
   }
 
+  const src =
+    detail?.source ||
+    seed?.source ||
+    (id.includes(":") ? id.split(":")[0] : "huangguo");
+  const listBack =
+    src === "huangdou"
+      ? "/huangdou"
+      : src === "yeguo"
+        ? "/yeguo"
+        : "/huangguo";
+
   return (
     <PageShell
       className="detail-page"
       title={title}
-      back="/"
+      back={listBack}
       subtitle={detail?.channel || undefined}
       onRefresh={() => refresh()}
     >

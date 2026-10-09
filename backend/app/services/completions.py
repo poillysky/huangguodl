@@ -74,15 +74,22 @@ class Completions:
         vid = str(vid or "").strip()
         if not vid:
             return set()
+        # legacy bare id ↔ huangguo:id
+        alts = [vid]
+        if vid.startswith("huangguo:"):
+            alts.append(vid.split(":", 1)[1])
+        elif ":" not in vid:
+            alts.append(f"huangguo:{vid}")
         with self._lock:
-            body = self._shows.get(vid) or {}
-            eps = body.get("eps") or {}
             out: set[int] = set()
-            for k in eps:
-                try:
-                    out.add(int(k))
-                except (TypeError, ValueError):
-                    pass
+            for key in alts:
+                body = self._shows.get(key) or {}
+                eps = body.get("eps") or {}
+                for k in eps:
+                    try:
+                        out.add(int(k))
+                    except (TypeError, ValueError):
+                        pass
             return out
 
     def has(self, vid: str, ep: int) -> bool:

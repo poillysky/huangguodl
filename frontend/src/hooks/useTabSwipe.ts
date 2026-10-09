@@ -2,20 +2,14 @@ import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 /** 底栏主页，左右滑切换 */
-export const TAB_PATHS = [
-  "/",
-  "/browse",
-  "/favorites",
-  "/tasks",
-  "/me",
-] as const;
+export const TAB_PATHS = ["/huangguo", "/huangdou", "/yeguo", "/me"] as const;
 
 const IGNORE =
-  ".chips-scroll-2, .poster-rail, .ep-grid, [data-no-tab-swipe], input, textarea, select";
+  ".chips-scroll, .chips-scroll-2, .poster-rail, .ep-grid, [data-no-tab-swipe], input, textarea, select";
 
 /**
- * 仅在首页/分类/任务/设置：水平滑动切换相邻 Tab。
- * 详情、播放页不启用；横滑列表区域忽略。
+ * 底栏主 Tab（黄果 / 黄豆 / 野果 / 我的）左右滑切换。
+ * 详情、播放、收藏、下载页不启用；横滑列表区域忽略。
  */
 export function useTabSwipe(enabled = true) {
   const loc = useLocation();

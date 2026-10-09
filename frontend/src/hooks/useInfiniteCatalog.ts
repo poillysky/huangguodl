@@ -2,8 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Show } from "../api/client";
 
 type Mode =
-  | { type: "catalog"; category: string; sort?: "hot" | "new" }
-  | { type: "search"; keyword: string };
+  | {
+      type: "catalog";
+      category: string;
+      sort?: "hot" | "new";
+      source?: string;
+      tab?: string;
+    }
+  | { type: "search"; keyword: string; source?: string };
 
 function mergeUnique(prev: Show[], next: Show[]) {
   const seen = new Set(prev.map((s) => s.id));
@@ -16,10 +22,14 @@ function mergeUnique(prev: Show[], next: Show[]) {
   return out;
 }
 
-export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
+export function useInfiniteCatalog(
+  mode: Mode,
+  pageSize = 20,
+  enabled = true,
+) {
   const [items, setItems] = useState<Show[]>([]);
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(enabled));
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState("");
@@ -28,8 +38,8 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
   const refreshWaiters = useRef<Array<() => void>>([]);
   const modeKey =
     mode.type === "search"
-      ? `search:${mode.keyword}`
-      : `cat:${mode.category}:${mode.sort || ""}`;
+      ? `search:${mode.keyword}:${mode.source || ""}`
+      : `cat:${mode.category}:${mode.sort || ""}:${mode.source || ""}:${mode.tab || ""}`;
 
   const resetKey = useRef(modeKey);
   // 切换分类/关键词时置位：用于丢弃"仍持有旧 page"的那一轮请求
@@ -38,6 +48,17 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
   const gen = useRef(0);
 
   useEffect(() => {
+    if (!enabled) {
+      gen.current += 1;
+      setItems([]);
+      setPage(1);
+      setHasMore(false);
+      setError("");
+      setLoading(false);
+      setLoadingMore(false);
+      lock.current = false;
+      return;
+    }
     if (resetKey.current === modeKey) return;
     resetKey.current = modeKey;
     gen.current += 1;
@@ -48,9 +69,10 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
     setError("");
     setLoading(true);
     lock.current = false;
-  }, [modeKey]);
+  }, [modeKey, enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     // 本 effect 与上面的重置 effect 在同一次提交里按声明顺序执行，但闭包里的
     // `page` 还是旧值。若此时按旧页码去请求新分类，会多跑一次请求、并把结果
     // 塞进列表（resetKey 已更新，旧的 modeKey 校验拦不住）。这里直接跳过这一轮，
@@ -69,8 +91,15 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
 
     const req =
       mode.type === "search"
-        ? api.search(mode.keyword, page)
-        : api.catalog(mode.category, page, pageSize, mode.sort);
+        ? api.search(mode.keyword, page, mode.source)
+        : api.catalog(
+            mode.category,
+            page,
+            pageSize,
+            mode.sort,
+            mode.source,
+            mode.tab,
+          );
 
     const stale = () =>
       cancelled || genAtStart !== gen.current || resetKey.current !== modeKey;
@@ -99,15 +128,17 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
     };
     // mode fields covered by modeKey
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modeKey, page, pageSize, reloadId]);
+  }, [modeKey, page, pageSize, reloadId, enabled]);
 
   const loadMore = useCallback(() => {
+    if (!enabled) return;
     if (lock.current || loading || loadingMore || !hasMore || error) return;
     setPage((p) => p + 1);
-  }, [loading, loadingMore, hasMore, error]);
+  }, [enabled, loading, loadingMore, hasMore, error]);
 
   /** Pull-to-refresh / reconnect: reload first page and clear error. */
   const refresh = useCallback(() => {
+    if (!enabled) return Promise.resolve();
     return new Promise<void>((resolve) => {
       refreshWaiters.current.push(resolve);
       setItems([]);
@@ -118,7 +149,7 @@ export function useInfiniteCatalog(mode: Mode, pageSize = 20) {
       setPage(1);
       setReloadId((n) => n + 1);
     });
-  }, []);
+  }, [enabled]);
 
   return {
     items,

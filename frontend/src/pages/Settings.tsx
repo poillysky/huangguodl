@@ -10,6 +10,9 @@ export default function SettingsPage() {
     http_proxy: "",
     cover_proxy: "",
     cover_token: "",
+    huangdou_api: "",
+    yeguo_api: "",
+    sources_enabled: "huangguo,huangdou,yeguo",
   });
   const [out, setOut] = useState("");
   const [data, setData] = useState("");
@@ -32,6 +35,9 @@ export default function SettingsPage() {
           http_proxy: s.http_proxy,
           cover_proxy: s.cover_proxy,
           cover_token: s.cover_token,
+          huangdou_api: s.huangdou_api || "",
+          yeguo_api: s.yeguo_api || "",
+          sources_enabled: s.sources_enabled || "huangguo,huangdou,yeguo",
         });
         setOut(s.out || "");
         setData(s.data || "");
@@ -62,6 +68,9 @@ export default function SettingsPage() {
         http_proxy: s.http_proxy,
         cover_proxy: s.cover_proxy,
         cover_token: s.cover_token,
+        huangdou_api: s.huangdou_api || "",
+        yeguo_api: s.yeguo_api || "",
+        sources_enabled: s.sources_enabled || "huangguo,huangdou,yeguo",
       });
       setMsg("已保存，后续请求会走新配置");
     } catch (err) {
@@ -137,11 +146,38 @@ export default function SettingsPage() {
             />
           </label>
           <label>
-            <span>上游 API</span>
+            <span>黄果 API</span>
             <input
               value={form.hg_api}
               onChange={(e) => setField("hg_api", e.target.value)}
               placeholder="https://huangguoai.com"
+              disabled={loading}
+            />
+          </label>
+          <label>
+            <span>黄豆 API</span>
+            <input
+              value={form.huangdou_api || ""}
+              onChange={(e) => setField("huangdou_api", e.target.value)}
+              placeholder="https://lzlukvca.cc（黄豆线路，可换）"
+              disabled={loading}
+            />
+          </label>
+          <label>
+            <span>野果 API</span>
+            <input
+              value={form.yeguo_api || ""}
+              onChange={(e) => setField("yeguo_api", e.target.value)}
+              placeholder="https://www.yeguodj.com/api.php"
+              disabled={loading}
+            />
+          </label>
+          <label>
+            <span>启用片源</span>
+            <input
+              value={form.sources_enabled || ""}
+              onChange={(e) => setField("sources_enabled", e.target.value)}
+              placeholder="huangguo,huangdou,yeguo"
               disabled={loading}
             />
           </label>

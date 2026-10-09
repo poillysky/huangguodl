@@ -54,7 +54,14 @@ export function usePullToRefresh(
       const ease = animate ? "transform 0.22s ease-out" : "none";
       body.style.transition = ease;
       ptr.style.transition = ease;
-      body.style.transform = dist ? `translate3d(0,${dist}px,0)` : "";
+      // 仅下拉时写 transform；闲时清空，避免 sticky 被包含块带跑
+      if (dist) {
+        body.style.willChange = "transform";
+        body.style.transform = `translate3d(0,${dist}px,0)`;
+      } else {
+        body.style.transform = "";
+        body.style.willChange = "";
+      }
       // indicator sits just above content; slides in with pull
       ptr.style.transform = `translate3d(0,${dist - THRESHOLD}px,0)`;
       ptr.style.opacity = dist > 2 || refreshingRef.current ? "1" : "0";
@@ -156,6 +163,7 @@ export function usePullToRefresh(
           body.style.transition = "";
           ptr.style.transition = "";
           body.style.transform = "";
+          body.style.willChange = "";
           ptr.style.transform = `translate3d(0,-${THRESHOLD}px,0)`;
         }, 240);
       }

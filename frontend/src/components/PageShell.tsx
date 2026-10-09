@@ -7,6 +7,9 @@ type Props = {
   back?: boolean | string;
   right?: ReactNode;
   subtitle?: string;
+  titleAlign?: "center" | "start";
+  /** 顶栏内标题下方插槽（搜索等） */
+  headerExtra?: ReactNode;
   children: ReactNode;
   className?: string;
   /** Pull-down to reconnect / reload list */
@@ -19,6 +22,8 @@ export default function PageShell({
   back,
   right,
   subtitle,
+  titleAlign,
+  headerExtra,
   children,
   className = "",
   onRefresh,
@@ -35,7 +40,14 @@ export default function PageShell({
 
   return (
     <section className={`page${className ? ` ${className}` : ""}`}>
-      <TopBar title={title} back={back} right={right} subtitle={subtitle} />
+      <TopBar
+        title={title}
+        back={back}
+        right={right}
+        subtitle={subtitle}
+        titleAlign={titleAlign}
+        extra={headerExtra}
+      />
       <div className="page-scroll" ref={scrollerRef}>
         {onRefresh ? (
           <div className="ptr" ref={ptrRef} aria-hidden>

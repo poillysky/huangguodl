@@ -1,7 +1,16 @@
 export type Category = { value: string; title: string };
 
+export type BrowseFilterDim = {
+  title: string;
+  options: Category[];
+};
+
+export type BrowseFilters = Record<string, BrowseFilterDim>;
+
 export type Show = {
-  id: string;
+  id: string; // source:nativeId
+  nativeId?: string;
+  source?: string;
   title: string;
   total: number;
   finished: boolean;
@@ -11,10 +20,14 @@ export type Show = {
   hot?: number;
 };
 
+export type SourceInfo = { name: string; title: string };
+
 export type Episode = { n: number; title: string; url?: string };
 
 export type ShowDetail = {
   id: string;
+  nativeId?: string;
+  source?: string;
   title: string;
   cover: string;
   tags: string[];
@@ -64,6 +77,9 @@ export type RuntimeSettings = {
   http_proxy: string;
   cover_proxy: string;
   cover_token: string;
+  huangdou_api?: string;
+  yeguo_api?: string;
+  sources_enabled?: string;
   out?: string;
   data?: string;
 };
@@ -116,15 +132,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
-  config: () =>
-    request<{
+  config: (source?: string) => {
+    const qs = source
+      ? `?source=${encodeURIComponent(source)}`
+      : "";
+    return request<{
       ok: boolean;
       categories: Category[];
+      tags?: Category[];
+      filters?: BrowseFilters;
+      sources?: SourceInfo[];
+      source?: string | null;
       out: string;
       api: string;
       httpProxy: string;
       authRequired: boolean;
-    }>("/api/config"),
+    }>(`/api/config${qs}`);
+  },
   settings: () =>
     request<{ ok: boolean } & RuntimeSettings>("/api/settings"),
   saveSettings: (body: Partial<RuntimeSettings>) =>
@@ -145,6 +169,8 @@ export const api = {
     page = 1,
     pageSize = 20,
     sort?: "hot" | "new",
+    source?: string,
+    tab?: string,
   ) => {
     const qs = new URLSearchParams({
       category,
@@ -152,17 +178,42 @@ export const api = {
       pageSize: String(pageSize),
     });
     if (sort) qs.set("sort", sort);
+    if (source) qs.set("source", source);
+    if (tab) qs.set("tab", tab);
     return request<{
       items: Show[];
       category: string;
       page: number;
       sort?: string | null;
+      source?: string | null;
+      tab?: string | null;
     }>(`/api/catalog?${qs}`);
   },
-  search: (q: string, page = 1) =>
-    request<{ items: Show[]; keyword: string; page: number }>(
-      `/api/search?q=${encodeURIComponent(q)}&page=${page}`,
-    ),
+  navTabs: (category: string, source = "huangdou") => {
+    const qs = new URLSearchParams({
+      category,
+      source,
+    });
+    return request<{
+      ok: boolean;
+      source: string;
+      category: string;
+      tabs: Category[];
+    }>(`/api/nav-tabs?${qs}`);
+  },
+  search: (q: string, page = 1, source?: string) => {
+    const qs = new URLSearchParams({
+      q,
+      page: String(page),
+    });
+    if (source) qs.set("source", source);
+    return request<{
+      items: Show[];
+      keyword: string;
+      page: number;
+      source?: string | null;
+    }>(`/api/search?${qs}`);
+  },
   episodes: (id: string) =>
     request<{ id: string; title: string; episodes: Episode[] }>(
       `/api/episodes?id=${encodeURIComponent(id)}`,
@@ -191,9 +242,16 @@ export const api = {
     }
   },
   play: (id: string, ep: number) =>
-    request<{ id: string; ep: number; url: string }>(
+    request<{ id: string; ep: number; url: string; rawUrl?: string }>(
       `/api/play?id=${encodeURIComponent(id)}&ep=${ep}`,
     ),
+  /** 浏览器取证播放用的本机 HLS 代理（一般由 /api/play 直接返回） */
+  hlsUrl: (upstream: string) => {
+    const qs = new URLSearchParams({ url: upstream });
+    const token = getToken();
+    if (token) qs.set("access_token", token);
+    return `/api/hls?${qs}`;
+  },
   download: (body: {
     title?: string;
     id?: string;

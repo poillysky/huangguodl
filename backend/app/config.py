@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     )
 
     hg_api: str = "https://huangguoai.com"
+    huangdou_api: str = "https://lzlukvca.cc"
+    yeguo_api: str = "https://www.yeguodj.com/api.php"
+    # comma-separated: huangguo,huangdou,yeguo
+    sources_enabled: str = "huangguo,huangdou,yeguo"
     # media files only
     out_dir: str = "downloads"
     # runtime settings + API cache (not media)
